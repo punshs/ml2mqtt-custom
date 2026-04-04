@@ -1,4 +1,4 @@
-name: "ml2mqtt"
+name: "ml2mqtt (Custom Fork)"
 description: "Machine learning for MQTT"
 version: "1.2.24"
 slug: "ml2mqtt"
