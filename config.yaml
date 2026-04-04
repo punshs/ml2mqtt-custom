@@ -1,6 +1,6 @@
 name: "ml2mqtt (Custom Fork)"
 description: "Machine learning for MQTT"
-version: "1.2.26"
+version: "1.2.27"
 slug: "ml2mqtt"
 arch:
   - aarch64

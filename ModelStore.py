@@ -145,6 +145,8 @@ class ModelStore:
         if entityKey.type == self.TYPE_STRING:
             return self._reverseStringTable[value] if value in self._reverseStringTable else None
         else:
+            if isinstance(value, float) and math.isnan(value):
+                return None
             return value
 
     def _generateFormatString(self, size: int = -1) -> str:
