@@ -7,6 +7,7 @@ import logging
 from ModelStore import ModelObservation, EntityKey
 from classifiers.RandomForest import RandomForestParams
 from classifiers.KNNClassifier import KNNParams
+from classifiers.GradientBoosted import GradientBoostedParams
 from utils.helpers import slugify
 from postprocessors.PostprocessorFactory import PostprocessorFactory
 from preprocessors.PreprocessorFactory import PreprocessorFactory
@@ -221,6 +222,19 @@ def init_model_routes(model_manager: ModelManager):
                 }
                 settings["model_parameters"]["KNN"] = knnParams
 
+            elif modelType == "GradientBoosted":
+                gbParams: GradientBoostedParams = {
+                    "n_estimators": get_int("nEstimators", 200),
+                    "max_depth": get_int("maxDepth", 6),
+                    "learning_rate": float(request.form.get("learningRate", 0.1)),
+                    "subsample": float(request.form.get("subsample", 0.8)),
+                    "colsample_bytree": float(request.form.get("colsampleBytree", 0.8)),
+                    "min_child_weight": get_int("minChildWeight", 1),
+                    "reg_alpha": float(request.form.get("regAlpha", 0.0)),
+                    "reg_lambda": float(request.form.get("regLambda", 1.0)),
+                }
+                settings["model_parameters"]["GradientBoosted"] = gbParams
+
             else:
                 return jsonify(success=False, error=f"Unknown model type '{modelType}'"), 400
 
@@ -272,7 +286,7 @@ def init_model_routes(model_manager: ModelManager):
             return jsonify({"error": str(e)}), 500
     @model_bp.route("/edit-model/<string:modelName>/model-settings/<string:modelType>")
     def getModelSettingsTemplate(modelName: str, modelType: str) -> str:
-        if modelType not in ["RandomForest", "KNN"]:
+        if modelType not in ["RandomForest", "KNN", "GradientBoosted"]:
             abort(404)
         model = ViewModel(modelName)
         settings = model_manager.getModel(modelName).getModelSettings()
@@ -312,6 +326,39 @@ def init_model_routes(model_manager: ModelManager):
         try:
             model_manager.getModel(modelName).deleteObservationsByLabel(label)
             return redirect(url_for("model.editModel", modelName=modelName, section="settings"))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/label/add", methods=["POST"])
+    def addLabel(modelName: str) -> Response:
+        """Add a new label to the model without requiring training data."""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "Missing JSON payload"}), 400
+            label = data.get("label", "").strip()
+            if not label:
+                return jsonify({"error": "Label name is required"}), 400
+            model_manager.getModel(modelName).addLabel(label)
+            return jsonify({"success": True, "label": label})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/generate-synthetic", methods=["POST"])
+    def generateSynthetic(modelName: str) -> Response:
+        """Generate synthetic training observations for a label (e.g., 'Away')."""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "Missing JSON payload"}), 400
+            label = data.get("label", "Away").strip()
+            count = int(data.get("count", 50))
+            if count < 1 or count > 500:
+                return jsonify({"error": "Count must be between 1 and 500"}), 400
+            generated = model_manager.getModel(modelName).generateSyntheticObservations(label, count)
+            return jsonify({"success": True, "generated": generated, "label": label})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -465,5 +512,161 @@ def init_model_routes(model_manager: ModelManager):
         except Exception as e:
             logger.exception(f"Error setting MQTT topic for model '{modelName}': {e}")
             return jsonify({"error": str(e)}), 500
-    
+
+    # ── Mobile Training Page ─────────────────────────────────────────
+
+    @model_bp.route("/train/<string:modelName>")
+    def trainModel(modelName: str) -> str:
+        model = model_manager.getModel(modelName)
+        if not model:
+            abort(404)
+        return render_template(
+            "train.html",
+            title=f"Train: {modelName}",
+            model_name=modelName,
+            labels=model.getLabels(),
+            active_page="train",
+        )
+
+    @model_bp.route("/api/model/<string:modelName>/live", methods=["GET"])
+    def liveData(modelName: str) -> Response:
+        """Return current prediction, sensors, and stats for the training UI."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            return jsonify(model.getLiveData())
+        except Exception as e:
+            logger.exception(f"Error getting live data for model '{modelName}': {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/collect", methods=["POST"])
+    def toggleCollection(modelName: str) -> Response:
+        """Start or stop collecting observations."""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "Missing JSON payload"}), 400
+
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+            action = data.get("action", "toggle")
+            label = data.get("label", "")
+
+            if action == "start":
+                if not label:
+                    return jsonify({"error": "Label is required to start collecting"}), 400
+                model.startCollecting(label)
+                return jsonify({"success": True, "collecting": True, "label": label})
+            elif action == "stop":
+                model.stopCollecting()
+                return jsonify({"success": True, "collecting": False})
+            else:
+                # Toggle
+                if model.isCollecting():
+                    model.stopCollecting()
+                    return jsonify({"success": True, "collecting": False})
+                else:
+                    if not label:
+                        return jsonify({"error": "Label is required to start collecting"}), 400
+                    model.startCollecting(label)
+                    return jsonify({"success": True, "collecting": True, "label": label})
+        except Exception as e:
+            logger.exception(f"Error toggling collection for model '{modelName}': {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/learning-type", methods=["POST"])
+    def setLearningTypeApi(modelName: str) -> Response:
+        """Change learning type from the training UI."""
+        try:
+            data = request.get_json()
+            if not data or "learning_type" not in data:
+                return jsonify({"error": "learning_type is required"}), 400
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            model.setLearningType(data["learning_type"])
+            return jsonify({"success": True, "learning_type": data["learning_type"]})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ── Data Management APIs ─────────────────────────────────────────
+
+    @model_bp.route("/api/model/<string:modelName>/label/<string:label>/data", methods=["DELETE"])
+    def clearLabelData(modelName: str, label: str) -> Response:
+        """Delete all observations for a specific label."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            result = model.clearLabelData(label)
+            return jsonify({"success": True, **result})
+        except Exception as e:
+            logger.exception(f"Error clearing label data: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/retrain", methods=["POST"])
+    def retrainModel(modelName: str) -> Response:
+        """Force model retrain from current observations."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            result = model.retrain()
+            return jsonify({"success": True, **result})
+        except Exception as e:
+            logger.exception(f"Error retraining model: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/data-health", methods=["GET"])
+    def dataHealth(modelName: str) -> Response:
+        """Return data quality metrics."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            return jsonify(model.getDataHealth())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/confusion-matrix", methods=["GET"])
+    def confusionMatrix(modelName: str) -> Response:
+        """Return confusion matrix data."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            matrix = model.getConfusionMatrix()
+            return jsonify({"success": True, "data": matrix})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/sensors", methods=["GET"])
+    def sensorEntities(modelName: str) -> Response:
+        """Return sensor entities with importance scores."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            return jsonify({"success": True, "sensors": model.getSensorEntities()})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/sensor/<path:entityName>", methods=["DELETE"])
+    def deleteSensor(modelName: str, entityName: str) -> Response:
+        """Remove a sensor from the model and all observations."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            result = model.deleteSensor(entityName)
+            if result.get("success"):
+                return jsonify(result)
+            return jsonify(result), 400
+        except Exception as e:
+            logger.exception(f"Error deleting sensor: {e}")
+            return jsonify({"error": str(e)}), 500
+
     return model_bp 

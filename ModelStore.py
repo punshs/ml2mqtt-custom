@@ -62,7 +62,6 @@ class ModelStore:
         self.lock = threading.Lock()
         self._db = sqlite3.connect(modelPath, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
-        self._cursor = self._db.cursor()
 
         self._createTables()
         self._populateSensors()
@@ -97,12 +96,14 @@ class ModelStore:
 
     def _populateSensors(self) -> None:
         self._entityKeys: List[EntityKey] = []
-        for name, type_ in self._cursor.execute("SELECT name, type FROM SensorKeys"):
+        cursor = self._db.cursor()
+        for name, type_ in cursor.execute("SELECT name, type FROM SensorKeys"):
             self._entityKeys.append(EntityKey(name, type_))
         self._entityKeySet: Set[str] = set(sk.name for sk in self._entityKeys)
 
     def _populateStringTable(self) -> None:
-        self._stringTable: Dict[str, int] = dict((row[1], row[0]) for row in self._cursor.execute("SELECT ROWID, name FROM StringTable"))
+        cursor = self._db.cursor()
+        self._stringTable: Dict[str, int] = dict((row[1], row[0]) for row in cursor.execute("SELECT ROWID, name FROM StringTable"))
         self._reverseStringTable: Dict[int, str] = {v: k for k, v in self._stringTable.items()}
 
     def _getStringId(self, string: str) -> int:
@@ -198,9 +199,12 @@ class ModelStore:
             self.logger.exception("Exception while adding observation")
 
     def getObservations(self) -> List[ModelObservation]:
-        self._cursor.execute("SELECT time, label, data FROM Observations ORDER BY time DESC")
+        with self.lock:
+            cursor = self._db.cursor()
+            cursor.execute("SELECT time, label, data FROM Observations ORDER BY time DESC")
+            rows = cursor.fetchall()
         observations: List[ModelObservation] = []
-        for timeVal, label, data in self._cursor.fetchall():
+        for timeVal, label, data in rows:
             formatStr = self._generateFormatString(len(data))
             unpacked = struct.unpack(formatStr, data)
             sensorValues = {
@@ -246,7 +250,9 @@ class ModelStore:
         return self._getSetting("name", None)
 
     def getLabels(self) -> List[str]:
-        return [row[0] for row in self._cursor.execute("SELECT DISTINCT label FROM Observations ORDER BY label ASC")]
+        with self.lock:
+            cursor = self._db.cursor()
+            return [row[0] for row in cursor.execute("SELECT DISTINCT label FROM Observations ORDER BY label ASC")]
 
     def deleteObservationsByLabel(self, label: str) -> None:
         with self.lock, self._db:

@@ -6,9 +6,9 @@ models/
 *.pyo
 *.pyd
 *.db
-ml2mqtt/.DS_Store
+
+# Config (contains credentials)
 settings.json
-ml2mqtt/settings.json
 
 # IDE
 .vscode/
@@ -17,3 +17,6 @@ ml2mqtt/settings.json
 # Environment
 .env
 env/
+
+# Data
+data/

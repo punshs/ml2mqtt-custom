@@ -6,6 +6,7 @@
     <select id="classifier" name="classifier" class="styledSelect" onchange="onClassifierChange()">
       <option value="RandomForest" {% if model.params.modelParameters.model_type == 'RandomForest' %}selected{% endif %}>Random Forest</option>
       <option value="KNN" {% if model.params.modelParameters.model_type == 'KNN' %}selected{% endif %}>K-Nearest Neighbors</option>
+      <option value="GradientBoosted" {% if model.params.modelParameters.model_type == 'GradientBoosted' %}selected{% endif %}>XGBoost (Gradient Boosted)</option>
     </select>
   </div>
 
@@ -44,6 +45,8 @@
       {% include 'edit_model/partials/model_settings/randomforest.html' %}
     {% elif model.params.modelParameters.model_type == 'KNN' %}
       {% include 'edit_model/partials/model_settings/knn.html' %}
+    {% elif model.params.modelParameters.model_type == 'GradientBoosted' %}
+      {% include 'edit_model/partials/model_settings/gradientboosted.html' %}
     {% endif %}
 
     <div style="text-align: right; margin-top: 2rem;">

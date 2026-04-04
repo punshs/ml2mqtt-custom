@@ -1,0 +1,78 @@
+{% set gb = model.params.modelParameters.model_parameters.GradientBoosted if model.params.modelParameters.model_parameters.GradientBoosted is defined else {} %}
+<div class="form-group">
+  <label>Number of Estimators (Trees)</label>
+  <input type="number" name="nEstimators" value="{{ gb.n_estimators | default(200) }}">
+</div>
+<div class="form-group">
+  <label>Max Depth</label>
+  <input type="number" name="maxDepth" value="{{ gb.max_depth | default(6) }}">
+</div>
+<div class="form-group">
+  <label>Learning Rate</label>
+  <input type="number" name="learningRate" step="0.01" value="{{ gb.learning_rate | default(0.1) }}">
+</div>
+<div class="form-group">
+  <label>Subsample Ratio</label>
+  <input type="number" name="subsample" step="0.1" min="0.1" max="1.0" value="{{ gb.subsample | default(0.8) }}">
+</div>
+<div class="form-group">
+  <label>Column Sample by Tree</label>
+  <input type="number" name="colsampleBytree" step="0.1" min="0.1" max="1.0" value="{{ gb.colsample_bytree | default(0.8) }}">
+</div>
+<div class="form-group">
+  <label>Min Child Weight</label>
+  <input type="number" name="minChildWeight" value="{{ gb.min_child_weight | default(1) }}">
+</div>
+<div class="form-group">
+  <label>L1 Regularization (Alpha)</label>
+  <input type="number" name="regAlpha" step="0.01" value="{{ gb.reg_alpha | default(0.0) }}">
+</div>
+<div class="form-group">
+  <label>L2 Regularization (Lambda)</label>
+  <input type="number" name="regLambda" step="0.01" value="{{ gb.reg_lambda | default(1.0) }}">
+</div>
+
+<script>
+async function saveClassifierSettings() {
+  const saveBtn = document.getElementById("saveBtn");
+  saveBtn.disabled = true;
+
+  const formData = new FormData();
+  formData.append("modelType", "GradientBoosted");
+
+  const fields = [
+    "nEstimators", "maxDepth", "learningRate", "subsample",
+    "colsampleBytree", "minChildWeight", "regAlpha", "regLambda"
+  ];
+
+  for (const field of fields) {
+    const el = document.querySelector(`[name="${field}"]`);
+    if (!el || !el.value) {
+      showToast(`Invalid value for ${field}`, true);
+      saveBtn.disabled = false;
+      return;
+    }
+    formData.append(field, el.value);
+  }
+
+  try {
+    showToast("Saving...", false, true);
+
+    const response = await fetch("{{ url_for('model.updateModelSettings', modelName=model.name) }}", {
+      method: "POST",
+      body: formData
+    });
+
+    if (response.ok) {
+      localStorage.setItem("tuningComplete", "true");
+      window.location.reload();
+    } else {
+      showToast("Failed to save settings.", true);
+    }
+  } catch (err) {
+    showToast("Server error during save.", true);
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+</script>

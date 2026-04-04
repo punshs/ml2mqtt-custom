@@ -1,0 +1,702 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="train-container" id="trainApp" data-model="{{ model_name }}">
+
+  <!-- Prediction Ring -->
+  <div class="prediction-section">
+    <div class="prediction-ring" id="predictionRing">
+      <div class="ring-inner">
+        <div class="prediction-label" id="predictionLabel">—</div>
+        <div class="prediction-confidence" id="predictionConfidence">Waiting...</div>
+      </div>
+    </div>
+    <div class="smoothed-badge" id="smoothedBadge" style="display:none">
+      <span class="smoothed-icon">⊕</span> Smoothed: <span id="smoothedLabel">—</span>
+    </div>
+  </div>
+
+  <!-- Room Label Pills -->
+  <div class="label-pills" id="labelPills">
+    {% for label in labels %}
+    <button class="pill" data-label="{{ label }}" onclick="selectLabel('{{ label }}')">{{ label }}</button>
+    {% endfor %}
+  </div>
+
+  <!-- Collection Controls -->
+  <div class="collection-section">
+    <div class="collection-row">
+      <button class="collect-btn" id="collectBtn" onclick="toggleCollection()">
+        <span class="collect-icon" id="collectIcon">●</span>
+        <span id="collectText">START COLLECTING</span>
+      </button>
+    </div>
+    <div class="mode-pills">
+      <button class="mode-pill active" id="modeEager" onclick="setLearningType('EAGER')">Eager</button>
+      <button class="mode-pill" id="modeLazy" onclick="setLearningType('LAZY')">Lazy</button>
+    </div>
+    <div class="mode-hint" id="modeHint">Eager: saves every reading</div>
+  </div>
+
+  <!-- Live Sensor Readings -->
+  <div class="sensor-card">
+    <div class="sensor-header">
+      <span class="sensor-title">Live Sensors</span>
+      <span class="sensor-update" id="lastUpdate">—</span>
+    </div>
+    <div class="sensor-table" id="sensorTable">
+      <div class="sensor-row placeholder">
+        <span>Waiting for MQTT data...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats Footer -->
+  <div class="stats-bar">
+    <div class="stat">
+      <span class="stat-value" id="obsCount">0</span>
+      <span class="stat-label">Observations</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value" id="accuracy">—</span>
+      <span class="stat-label">Accuracy</span>
+    </div>
+    <div class="stat-breakdown" id="labelBreakdown"></div>
+  </div>
+
+  <!-- ── Data Manager Panel ─────────────────────────────────── -->
+  <div class="panel-card">
+    <button class="panel-toggle" onclick="togglePanel('dataPanel')">
+      <span>📊 Data Manager</span>
+      <span class="chevron" id="dataPanelChevron">▾</span>
+    </button>
+    <div class="panel-body" id="dataPanel" style="display:none">
+      <!-- Warnings -->
+      <div id="dataWarnings"></div>
+      <!-- Per-label bar chart -->
+      <div id="labelBars"></div>
+      <!-- Actions -->
+      <div class="panel-actions">
+        <button class="action-btn retrain" onclick="retrainModel()">🔄 Retrain Model</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Confusion Matrix ───────────────────────────────────── -->
+  <div class="panel-card">
+    <button class="panel-toggle" onclick="togglePanel('confPanel')">
+      <span>🔀 Confusion Matrix</span>
+      <span class="chevron" id="confPanelChevron">▾</span>
+    </button>
+    <div class="panel-body" id="confPanel" style="display:none">
+      <div id="confMatrix" class="conf-matrix-container">
+        <div class="placeholder-text">Train with 2+ labels to see the confusion matrix</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Sensor Management ──────────────────────────────────── -->
+  <div class="panel-card">
+    <button class="panel-toggle" onclick="togglePanel('sensorPanel')">
+      <span>📡 Sensor Management</span>
+      <span class="chevron" id="sensorPanelChevron">▾</span>
+    </button>
+    <div class="panel-body" id="sensorPanel" style="display:none">
+      <div id="sensorList" class="sensor-mgmt-list">
+        <div class="placeholder-text">Loading sensors...</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div class="train-toast" id="trainToast"></div>
+
+<style>
+  /* ── Reset for this page ─────────────────────────────────── */
+  .container { max-width: 100%; padding: 0; }
+
+  .train-container {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    min-height: calc(100vh - 60px);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  /* ── Prediction Ring ────────────────────────────────────── */
+  .prediction-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1rem 0 0;
+    gap: 0.5rem;
+  }
+
+  .prediction-ring {
+    width: 170px;
+    height: 170px;
+    border-radius: 50%;
+    border: 4px solid #1a3a5c;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle, #0d1b2a 60%, #112240 100%);
+    box-shadow: 0 0 30px rgba(0,200,255,0.05), inset 0 0 30px rgba(0,200,255,0.03);
+    transition: border-color 0.5s ease, box-shadow 0.5s ease;
+  }
+  .prediction-ring.high { border-color: #00c8ff; box-shadow: 0 0 40px rgba(0,200,255,0.25); }
+  .prediction-ring.medium { border-color: #f0c040; box-shadow: 0 0 40px rgba(240,192,64,0.2); }
+  .prediction-ring.low { border-color: #ff5050; box-shadow: 0 0 40px rgba(255,80,80,0.2); }
+
+  .ring-inner { text-align: center; }
+  .prediction-label { font-size: 1.6rem; font-weight: 700; color: #fff; }
+  .prediction-confidence { font-size: 0.85rem; color: #8ab4de; margin-top: 0.2rem; }
+
+  .smoothed-badge {
+    font-size: 0.75rem;
+    color: #6a8aaa;
+    background: rgba(0,200,255,0.06);
+    border: 1px solid #1a3a5c;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+  }
+  .smoothed-icon { color: #00c8ff; }
+
+  /* ── Label Pills ────────────────────────────────────────── */
+  .label-pills {
+    display: flex; flex-wrap: wrap; gap: 0.5rem;
+    justify-content: center; padding: 0 0.5rem;
+  }
+  .pill {
+    padding: 0.5rem 1rem; border-radius: 20px;
+    border: 1.5px solid #2a4a6a; background: transparent;
+    color: #8ab4de; font-size: 0.85rem; font-weight: 500;
+    cursor: pointer; transition: all 0.2s ease;
+    -webkit-tap-highlight-color: transparent; user-select: none;
+  }
+  .pill:hover, .pill:active { background: #1a3a5c; }
+  .pill.predicted { border-color: #00c8ff; color: #00c8ff; background: rgba(0,200,255,0.08); }
+  .pill.selected { border-color: #4caf50; color: #fff; background: #4caf50; font-weight: 600; }
+  .pill.collecting { animation: pulse-border 1.5s ease-in-out infinite; }
+  @keyframes pulse-border {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(76,175,80,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(76,175,80,0); }
+  }
+
+  /* ── Collection Controls ────────────────────────────────── */
+  .collection-section { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
+  .collection-row { width: 100%; display: flex; justify-content: center; }
+  .collect-btn {
+    width: 100%; max-width: 320px; padding: 1rem 1.5rem;
+    border-radius: 12px; border: 2px solid #2a4a6a; background: #112240;
+    color: #8ab4de; font-size: 1rem; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 0.75rem;
+    transition: all 0.3s ease; -webkit-tap-highlight-color: transparent;
+  }
+  .collect-btn:active { transform: scale(0.97); }
+  .collect-btn.active {
+    background: linear-gradient(135deg, #1b5e20, #2e7d32);
+    border-color: #4caf50; color: #fff;
+    box-shadow: 0 4px 20px rgba(76,175,80,0.3);
+  }
+  .collect-icon { font-size: 1.2rem; transition: color 0.3s ease; }
+  .collect-btn.active .collect-icon { color: #ff4444; animation: blink 1s ease-in-out infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .mode-pills { display: flex; border-radius: 8px; overflow: hidden; border: 1px solid #2a4a6a; }
+  .mode-pill {
+    padding: 0.4rem 1.25rem; border: none; background: transparent;
+    color: #6a8aaa; font-size: 0.8rem; font-weight: 500; cursor: pointer;
+    transition: all 0.2s ease; -webkit-tap-highlight-color: transparent;
+  }
+  .mode-pill.active { background: #1a3a5c; color: #00c8ff; font-weight: 600; }
+  .mode-hint { font-size: 0.75rem; color: #5a7a9a; text-align: center; }
+
+  /* ── Sensor Card ────────────────────────────────────────── */
+  .sensor-card { background: #112240; border: 1px solid #1a3a5c; border-radius: 12px; overflow: hidden; }
+  .sensor-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.75rem 1rem; border-bottom: 1px solid #1a3a5c;
+  }
+  .sensor-title { font-size: 0.85rem; font-weight: 600; color: #8ab4de; text-transform: uppercase; letter-spacing: 0.05em; }
+  .sensor-update { font-size: 0.7rem; color: #5a7a9a; }
+  .sensor-table { padding: 0; }
+  .sensor-row { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; border-bottom: 1px solid #0d1b2a; }
+  .sensor-row:last-child { border-bottom: none; }
+  .sensor-row.placeholder { justify-content: center; color: #5a7a9a; font-style: italic; padding: 1.5rem; }
+  .sensor-name { font-size: 0.85rem; color: #c0d0e0; font-weight: 500; }
+  .sensor-value { font-size: 0.85rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .sensor-value.normal { color: #e0f0ff; }
+  .sensor-value.unknown { color: #f0c040; }
+  .sensor-value.unavailable { color: #ff5050; }
+  .sensor-value.null { color: #4a5a6a; }
+
+  /* ── Stats Bar ──────────────────────────────────────────── */
+  .stats-bar {
+    display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;
+    padding: 0.75rem; background: #112240; border: 1px solid #1a3a5c; border-radius: 12px;
+  }
+  .stat { display: flex; flex-direction: column; align-items: center; min-width: 80px; }
+  .stat-value { font-size: 1.2rem; font-weight: 700; color: #fff; }
+  .stat-label { font-size: 0.7rem; color: #5a7a9a; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-breakdown { display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; width: 100%; margin-top: 0.25rem; }
+  .label-count { font-size: 0.7rem; color: #6a8aaa; }
+  .label-count strong { color: #8ab4de; }
+
+  /* ── Collapsible Panels ─────────────────────────────────── */
+  .panel-card { background: #112240; border: 1px solid #1a3a5c; border-radius: 12px; overflow: hidden; }
+  .panel-toggle {
+    width: 100%; display: flex; justify-content: space-between; align-items: center;
+    padding: 0.75rem 1rem; background: none; border: none;
+    color: #8ab4de; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .chevron { font-size: 0.8rem; transition: transform 0.2s; }
+  .chevron.open { transform: rotate(180deg); }
+  .panel-body { padding: 0 1rem 1rem; }
+  .panel-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
+  .action-btn {
+    padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid #2a4a6a;
+    background: transparent; color: #8ab4de; font-size: 0.8rem; font-weight: 500;
+    cursor: pointer; transition: all 0.2s; -webkit-tap-highlight-color: transparent;
+  }
+  .action-btn:active { transform: scale(0.96); }
+  .action-btn.retrain { border-color: #00c8ff; color: #00c8ff; }
+  .action-btn.retrain:hover { background: rgba(0,200,255,0.1); }
+  .action-btn.danger { border-color: #ff5050; color: #ff5050; }
+  .action-btn.danger:hover { background: rgba(255,80,80,0.1); }
+
+  .placeholder-text { color: #5a7a9a; font-style: italic; text-align: center; padding: 1rem; font-size: 0.8rem; }
+
+  /* ── Data Warnings ──────────────────────────────────────── */
+  .data-warning {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 0.75rem; margin-bottom: 0.5rem;
+    border-radius: 8px; font-size: 0.75rem;
+    background: rgba(240,192,64,0.08); border: 1px solid rgba(240,192,64,0.2); color: #f0c040;
+  }
+
+  /* ── Label Bars (data distribution) ─────────────────────── */
+  .label-bar-row {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.4rem 0; font-size: 0.8rem;
+  }
+  .label-bar-name { min-width: 80px; color: #c0d0e0; font-weight: 500; }
+  .label-bar-track {
+    flex: 1; height: 8px; background: #0d1b2a; border-radius: 4px; overflow: hidden;
+  }
+  .label-bar-fill {
+    height: 100%; border-radius: 4px; transition: width 0.5s ease;
+    background: linear-gradient(90deg, #00c8ff, #0088cc);
+  }
+  .label-bar-fill.low { background: linear-gradient(90deg, #f0c040, #cc9900); }
+  .label-bar-count { min-width: 30px; text-align: right; color: #6a8aaa; font-size: 0.75rem; }
+  .label-bar-actions { display: flex; gap: 0.25rem; }
+  .label-bar-clear {
+    background: none; border: none; color: #ff5050; font-size: 0.7rem;
+    cursor: pointer; padding: 0.15rem 0.4rem; border-radius: 4px;
+    opacity: 0.6; transition: opacity 0.2s;
+  }
+  .label-bar-clear:hover { opacity: 1; background: rgba(255,80,80,0.1); }
+
+  /* ── Confusion Matrix ───────────────────────────────────── */
+  .conf-matrix-container { overflow-x: auto; }
+  .conf-table {
+    width: 100%; border-collapse: collapse; font-size: 0.7rem;
+  }
+  .conf-table th, .conf-table td {
+    padding: 0.35rem; text-align: center; border: 1px solid #1a3a5c;
+  }
+  .conf-table th { color: #8ab4de; font-weight: 600; background: #0d1b2a; }
+  .conf-table .label-header { writing-mode: vertical-rl; text-orientation: mixed; }
+
+  /* ── Sensor Management ──────────────────────────────────── */
+  .sensor-mgmt-list { display: flex; flex-direction: column; gap: 0.25rem; }
+  .sensor-mgmt-row {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 0; border-bottom: 1px solid #0d1b2a; font-size: 0.8rem;
+  }
+  .sensor-mgmt-row:last-child { border-bottom: none; }
+  .sensor-mgmt-name { flex: 1; color: #c0d0e0; font-weight: 500; }
+  .sensor-mgmt-imp {
+    font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 10px;
+    background: rgba(0,200,255,0.1); color: #00c8ff; font-weight: 600;
+  }
+  .sensor-mgmt-delete {
+    background: none; border: 1px solid #ff5050; color: #ff5050;
+    font-size: 0.65rem; padding: 0.2rem 0.5rem; border-radius: 6px;
+    cursor: pointer; opacity: 0.7; transition: opacity 0.2s;
+  }
+  .sensor-mgmt-delete:hover { opacity: 1; background: rgba(255,80,80,0.1); }
+
+  /* ── Toast ──────────────────────────────────────────────── */
+  .train-toast {
+    position: fixed; bottom: 20px; left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: #1a3a5c; color: #fff; padding: 0.75rem 1.5rem;
+    border-radius: 8px; font-size: 0.85rem; font-weight: 500;
+    opacity: 0; transition: all 0.3s ease; z-index: 1000; pointer-events: none;
+  }
+  .train-toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+  /* ── Mobile ─────────────────────────────────────────────── */
+  @media (max-width: 480px) {
+    .train-container { padding: 0.75rem; gap: 1rem; }
+    .prediction-ring { width: 140px; height: 140px; }
+    .prediction-label { font-size: 1.3rem; }
+    .pill { padding: 0.4rem 0.75rem; font-size: 0.8rem; }
+  }
+</style>
+
+<script>
+const MODEL_NAME = '{{ model_name }}';
+let selectedLabel = '{{ labels[0] if labels else "" }}';
+let isCollecting = false;
+let pollTimer = null;
+
+// ── Label Selection ──────────────────────────────────────────
+function selectLabel(label) {
+  selectedLabel = label;
+  document.querySelectorAll('.pill').forEach(p => {
+    p.classList.remove('selected');
+    if (p.dataset.label === label) p.classList.add('selected');
+  });
+  if (isCollecting) startCollecting(label);
+}
+
+// ── Collection Toggle ────────────────────────────────────────
+async function toggleCollection() {
+  if (isCollecting) await stopCollecting();
+  else {
+    if (!selectedLabel) { showToast('Select a room label first'); return; }
+    await startCollecting(selectedLabel);
+  }
+}
+
+async function startCollecting(label) {
+  try {
+    const res = await fetch(`/api/model/${MODEL_NAME}/collect`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'start', label })
+    });
+    const data = await res.json();
+    if (data.success) { isCollecting = true; updateCollectionUI(); showToast(`Collecting: ${label}`); }
+  } catch (e) { showToast('Error starting collection'); }
+}
+
+async function stopCollecting() {
+  try {
+    const res = await fetch(`/api/model/${MODEL_NAME}/collect`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'stop' })
+    });
+    const data = await res.json();
+    if (data.success) { isCollecting = false; updateCollectionUI(); showToast('Collection stopped'); }
+  } catch (e) { showToast('Error stopping collection'); }
+}
+
+function updateCollectionUI() {
+  const btn = document.getElementById('collectBtn');
+  const text = document.getElementById('collectText');
+  if (isCollecting) {
+    btn.classList.add('active');
+    text.textContent = `COLLECTING: ${selectedLabel}`;
+    document.querySelectorAll('.pill').forEach(p =>
+      p.classList.toggle('collecting', p.dataset.label === selectedLabel));
+  } else {
+    btn.classList.remove('active');
+    text.textContent = 'START COLLECTING';
+    document.querySelectorAll('.pill').forEach(p => p.classList.remove('collecting'));
+  }
+}
+
+// ── Learning Type ────────────────────────────────────────────
+async function setLearningType(type) {
+  try {
+    await fetch(`/api/model/${MODEL_NAME}/learning-type`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ learning_type: type })
+    });
+    updateModeUI(type);
+    showToast(`Mode: ${type}`);
+  } catch (e) { showToast('Error changing mode'); }
+}
+
+function updateModeUI(type) {
+  document.getElementById('modeEager').classList.toggle('active', type === 'EAGER');
+  document.getElementById('modeLazy').classList.toggle('active', type === 'LAZY');
+  document.getElementById('modeHint').textContent = type === 'EAGER'
+    ? 'Eager: saves every reading' : 'Lazy: saves only wrong predictions';
+}
+
+// ── Live Polling ─────────────────────────────────────────────
+async function pollLiveData() {
+  try {
+    const res = await fetch(`/api/model/${MODEL_NAME}/live`);
+    const data = await res.json();
+    updatePrediction(data);
+    updateSensors(data.sensors);
+    updateStats(data);
+    updateFromServerState(data);
+  } catch (e) { console.error('Poll error:', e); }
+}
+
+function updatePrediction(data) {
+  const ring = document.getElementById('predictionRing');
+  const label = document.getElementById('predictionLabel');
+  const conf = document.getElementById('predictionConfidence');
+  const smoothedBadge = document.getElementById('smoothedBadge');
+
+  if (!data.prediction) {
+    label.textContent = '—';
+    conf.textContent = 'Waiting for data...';
+    ring.className = 'prediction-ring';
+    smoothedBadge.style.display = 'none';
+    return;
+  }
+
+  label.textContent = data.prediction;
+  const pct = Math.round(data.confidence * 100);
+  conf.textContent = `${pct}% confidence`;
+
+  ring.classList.remove('high', 'medium', 'low');
+  if (data.confidence >= 0.75) ring.classList.add('high');
+  else if (data.confidence >= 0.5) ring.classList.add('medium');
+  else ring.classList.add('low');
+
+  // Show smoothed prediction if different
+  if (data.smoothed_prediction && data.smoothed_prediction !== data.prediction) {
+    smoothedBadge.style.display = '';
+    document.getElementById('smoothedLabel').textContent = data.smoothed_prediction;
+  } else {
+    smoothedBadge.style.display = 'none';
+  }
+
+  // Highlight predicted pill
+  document.querySelectorAll('.pill').forEach(p => {
+    const isPredicted = p.dataset.label === data.prediction;
+    const isSelected = p.dataset.label === selectedLabel;
+    p.classList.toggle('predicted', isPredicted && !isSelected);
+  });
+}
+
+function updateSensors(sensors) {
+  const table = document.getElementById('sensorTable');
+  if (!sensors || sensors.length === 0) {
+    table.innerHTML = '<div class="sensor-row placeholder"><span>Waiting for MQTT data...</span></div>';
+    return;
+  }
+  table.innerHTML = sensors.map(s => {
+    let displayValue = s.value;
+    if (s.status === 'normal') { try { displayValue = parseFloat(s.value).toFixed(1); } catch(e) {} }
+    return `<div class="sensor-row">
+      <span class="sensor-name">${s.display_name}</span>
+      <span class="sensor-value ${s.status}">${displayValue}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('lastUpdate').textContent =
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function updateStats(data) {
+  document.getElementById('obsCount').textContent = data.observation_count || 0;
+  const acc = data.accuracy;
+  document.getElementById('accuracy').textContent = acc != null ? `${Math.round(acc * 100)}%` : '—';
+  const breakdown = document.getElementById('labelBreakdown');
+  if (data.label_stats) {
+    breakdown.innerHTML = Object.entries(data.label_stats)
+      .map(([l, count]) => `<span class="label-count"><strong>${l}</strong>: ${count}</span>`)
+      .join('');
+  }
+}
+
+function updateFromServerState(data) {
+  const wasCollecting = isCollecting;
+  isCollecting = data.collecting;
+  if (data.collecting && data.collecting_label) selectedLabel = data.collecting_label;
+  updateCollectionUI();
+  updateModeUI(data.learning_type);
+  document.querySelectorAll('.pill').forEach(p => {
+    p.classList.toggle('selected', p.dataset.label === selectedLabel);
+  });
+}
+
+// ── Panel Toggle ─────────────────────────────────────────────
+function togglePanel(id) {
+  const panel = document.getElementById(id);
+  const chevron = document.getElementById(id + 'Chevron');
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : '';
+  chevron.classList.toggle('open', !isOpen);
+  // Load data when opening
+  if (!isOpen) {
+    if (id === 'dataPanel') loadDataHealth();
+    if (id === 'confPanel') loadConfusionMatrix();
+    if (id === 'sensorPanel') loadSensors();
+  }
+}
+
+// ── Data Manager ─────────────────────────────────────────────
+async function loadDataHealth() {
+  try {
+    const res = await fetch(`/api/model/${MODEL_NAME}/data-health`);
+    const data = await res.json();
+
+    // Warnings
+    const warnEl = document.getElementById('dataWarnings');
+    if (data.warnings && data.warnings.length > 0) {
+      warnEl.innerHTML = data.warnings.map(w =>
+        `<div class="data-warning">⚠️ ${w.msg}</div>`).join('');
+    } else {
+      warnEl.innerHTML = '';
+    }
+
+    // Label bars
+    const barsEl = document.getElementById('labelBars');
+    const counts = data.label_counts || {};
+    const maxCount = Math.max(...Object.values(counts), 1);
+    barsEl.innerHTML = Object.entries(counts).sort((a,b) => b[1] - a[1]).map(([label, count]) => {
+      const pct = Math.round((count / maxCount) * 100);
+      const low = count < maxCount * 0.4 ? 'low' : '';
+      return `<div class="label-bar-row">
+        <span class="label-bar-name">${label}</span>
+        <div class="label-bar-track"><div class="label-bar-fill ${low}" style="width:${pct}%"></div></div>
+        <span class="label-bar-count">${count}</span>
+        <div class="label-bar-actions">
+          <button class="label-bar-clear" onclick="clearLabel('${label}')" title="Clear data">🗑</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    if (Object.keys(counts).length === 0) {
+      barsEl.innerHTML = '<div class="placeholder-text">No observations yet</div>';
+    }
+  } catch (e) { console.error('Data health error:', e); }
+}
+
+async function clearLabel(label) {
+  if (!confirm(`Delete ALL observations for "${label}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/model/${MODEL_NAME}/label/${encodeURIComponent(label)}/data`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Cleared ${label} data`);
+      loadDataHealth();
+    }
+  } catch (e) { showToast('Error clearing data'); }
+}
+
+async function retrainModel() {
+  showToast('Retraining...');
+  try {
+    const res = await fetch(`/api/model/${MODEL_NAME}/retrain`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      const acc = data.accuracy != null ? `${Math.round(data.accuracy * 100)}%` : 'N/A';
+      showToast(`Retrained! Accuracy: ${acc}`);
+      loadDataHealth();
+    }
+  } catch (e) { showToast('Error retraining'); }
+}
+
+// ── Confusion Matrix ─────────────────────────────────────────
+async function loadConfusionMatrix() {
+  try {
+    const res = await fetch(`/api/model/${MODEL_NAME}/confusion-matrix`);
+    const json = await res.json();
+    const el = document.getElementById('confMatrix');
+
+    if (!json.data || !json.data.labels) {
+      el.innerHTML = '<div class="placeholder-text">Train with 2+ labels to see the confusion matrix</div>';
+      return;
+    }
+
+    const { labels: lbls, matrix } = json.data;
+    const maxVal = Math.max(...matrix.flat(), 1);
+
+    let html = '<table class="conf-table"><thead><tr><th></th>';
+    html += lbls.map(l => `<th>${l}</th>`).join('');
+    html += '</tr></thead><tbody>';
+
+    for (let i = 0; i < lbls.length; i++) {
+      html += `<tr><th>${lbls[i]}</th>`;
+      for (let j = 0; j < lbls.length; j++) {
+        const val = matrix[i][j];
+        const intensity = val / maxVal;
+        const bg = i === j
+          ? `rgba(0, 200, 255, ${0.1 + intensity * 0.5})`
+          : val > 0 ? `rgba(255, 80, 80, ${0.1 + intensity * 0.5})` : 'transparent';
+        html += `<td style="background:${bg}; color:${val > 0 ? '#fff' : '#4a5a6a'}">${val}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  } catch (e) {
+    document.getElementById('confMatrix').innerHTML = '<div class="placeholder-text">Error loading matrix</div>';
+  }
+}
+
+// ── Sensor Management ────────────────────────────────────────
+async function loadSensors() {
+  try {
+    const res = await fetch(`/api/model/${MODEL_NAME}/sensors`);
+    const json = await res.json();
+    const el = document.getElementById('sensorList');
+
+    if (!json.sensors || json.sensors.length === 0) {
+      el.innerHTML = '<div class="placeholder-text">No sensors registered yet</div>';
+      return;
+    }
+
+    // Sort by importance descending
+    const sensors = json.sensors.sort((a, b) => b.importance - a.importance);
+    el.innerHTML = sensors.map(s => {
+      const impPct = Math.round(s.importance * 100);
+      return `<div class="sensor-mgmt-row">
+        <span class="sensor-mgmt-name">${s.display_name}</span>
+        <span class="sensor-mgmt-imp">${impPct}%</span>
+        <button class="sensor-mgmt-delete" onclick="deleteSensor('${s.entity_id}')">Remove</button>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('sensorList').innerHTML = '<div class="placeholder-text">Error loading sensors</div>';
+  }
+}
+
+async function deleteSensor(entityId) {
+  if (!confirm(`Remove sensor "${entityId}" from ALL observations? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/model/${MODEL_NAME}/sensor/${encodeURIComponent(entityId)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Removed sensor`);
+      loadSensors();
+    } else {
+      showToast(data.error || 'Error removing sensor');
+    }
+  } catch (e) { showToast('Error removing sensor'); }
+}
+
+// ── Toast ────────────────────────────────────────────────────
+function showToast(msg) {
+  const toast = document.getElementById('trainToast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+// ── Init ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  if (selectedLabel) selectLabel(selectedLabel);
+  pollLiveData();
+  pollTimer = setInterval(pollLiveData, 2000);
+});
+</script>
+
+{% endblock %}
