@@ -1,6 +1,7 @@
 import sqlite3
 import struct
 import logging
+import math
 import threading
 from dataclasses import dataclass, field
 import time
@@ -115,6 +116,8 @@ class ModelStore:
         return self._stringTable[string]
 
     def _getType(self, variable: Any) -> int:
+        if variable is None:
+            return self.TYPE_FLOAT  # Store None as NaN float
         if isinstance(variable, int):
             return self.TYPE_FLOAT
         elif isinstance(variable, float):
@@ -128,6 +131,8 @@ class ModelStore:
         raise ValueError(f"Unsupported type: {variable}")
 
     def _getDbValue(self, variable: Any) -> Union[int, float]:
+        if variable is None:
+            return float('nan')  # Sentinel for missing data
         varType = self._getType(variable)
         if varType == self.TYPE_STRING:
             stringId = self._getStringId(variable)
