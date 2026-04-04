@@ -125,6 +125,10 @@ class GradientBoosted:
 
         try:
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+            # XGBoost handles nan natively safely
+            X_train = X_train.fillna(np.nan)
+            X_test = X_test.fillna(np.nan)
+            
             self._pipeline.fit(X_train, y_train)
             self._X_test = X_test
             self._y_test = y_test
@@ -142,7 +146,12 @@ class GradientBoosted:
             return None, 0
 
         X = pd.DataFrame([sensorValues])
+        if X.empty and not sensorValues:
+            X = pd.DataFrame([{}])
+            
         X = X.reindex(columns=self._X_test.columns, fill_value=None)
+        # Gradient boosted handles np.nan natively, which represents missing values properly
+        X = X.fillna(np.nan)
 
         try:
             y_pred = self._pipeline.predict(X)

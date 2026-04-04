@@ -81,6 +81,10 @@ class RandomForest:
 
         try:
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+            # RandomForest cannot handle NaN natively. Fill missing values with a sentinel.
+            X_train = X_train.fillna(-9999.0)
+            X_test = X_test.fillna(-9999.0)
+            
             self._pipeline.fit(X_train, y_train)
             self._X_test = X_test
             self._y_test = y_test
@@ -96,7 +100,11 @@ class RandomForest:
             return None, 0
 
         X = pd.DataFrame([sensorValues])
+        if X.empty and not sensorValues:
+            X = pd.DataFrame([{}])
+            
         X = X.reindex(columns=self._X_test.columns, fill_value=None)
+        X = X.fillna(-9999.0)
 
         try:
             y_pred = self._pipeline.predict(X)
