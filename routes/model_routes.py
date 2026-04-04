@@ -38,6 +38,19 @@ def init_model_routes(model_manager: ModelManager):
         is_taken = model_manager.modelExists(slug)
         return json.dumps({"exists": is_taken})
 
+    @model_bp.route("/api/models", methods=["GET"])
+    def apiListModels() -> Response:
+        """JSON API endpoint listing all models."""
+        modelMap = model_manager.getModels()
+        models = []
+        for key in modelMap:
+            m = modelMap[key]
+            models.append({
+                "name": m.getName(),
+                "mqtt_topic": m.getMqttTopic(),
+            })
+        return jsonify({"success": True, "models": models})
+
     @model_bp.route("/create-model", methods=["GET", "POST"])
     def createModel() -> Response:
         if request.method == "POST":
@@ -73,6 +86,44 @@ def init_model_routes(model_manager: ModelManager):
             return redirect(url_for("model.home"))
 
         return render_template("create-model.html", title="Add Model", active_page="create_model")
+
+    @model_bp.route("/api/create-model", methods=["POST"])
+    def apiCreateModel() -> Response:
+        """JSON API endpoint for creating a model (used by Lovelace card)."""
+        data = request.get_json(force=True) if request.is_json else {}
+        modelName = data.get("model_name")
+        defaultValue = data.get("default_value", "9999")
+        mqttTopic = data.get("mqtt_topic")
+        labels = data.get("labels", [])
+        input_count = data.get("input_count", 17)
+
+        if not modelName:
+            return jsonify({"success": False, "error": "Missing model_name"}), 400
+        if not mqttTopic:
+            return jsonify({"success": False, "error": "Missing mqtt_topic"}), 400
+
+        if model_manager.modelExists(slugify(modelName)):
+            return jsonify({"success": False, "error": "Model already exists"}), 409
+
+        if isinstance(labels, str):
+            try:
+                labels = json.loads(labels)
+            except json.JSONDecodeError:
+                labels = []
+        labels = sorted(set(labels))
+
+        newModel = model_manager.addModel(modelName)
+        newModel.setMqttTopic(mqttTopic)
+        newModel.setName(modelName)
+        newModel.setModelConfig("labels", labels)
+        newModel.setModelConfig("input_count", int(input_count))
+        newModel.addPreprocessor("type_caster", {'sensor': [{"SELECT_ALL": True}]})
+        newModel.addPreprocessor("null_handler", {'sensor': [{"SELECT_ALL": True}], 'replacementType': 'float', 'nullReplacement': defaultValue})
+        newModel.addPostprocessor("only_diff", {})
+        newModel.setLearningType("EAGER")
+        newModel.subscribeToMqttTopics()
+
+        return jsonify({"success": True, "model_name": modelName})
 
     @model_bp.route("/delete-model/<string:modelName>/", methods=["POST"])
     def deleteModel(modelName: str) -> Response:
