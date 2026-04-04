@@ -354,6 +354,7 @@
 </style>
 
 <script>
+const BASE_URL = '{{ url_for("model.home") }}'.replace(/\/$/, '');
 const MODEL_NAME = '{{ model_name }}';
 let selectedLabel = '{{ labels[0] if labels else "" }}';
 let isCollecting = false;
@@ -380,7 +381,7 @@ async function toggleCollection() {
 
 async function startCollecting(label) {
   try {
-    const res = await fetch(`/api/model/${MODEL_NAME}/collect`, {
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/collect`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'start', label })
     });
@@ -391,7 +392,7 @@ async function startCollecting(label) {
 
 async function stopCollecting() {
   try {
-    const res = await fetch(`/api/model/${MODEL_NAME}/collect`, {
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/collect`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'stop' })
     });
@@ -418,7 +419,7 @@ function updateCollectionUI() {
 // ── Learning Type ────────────────────────────────────────────
 async function setLearningType(type) {
   try {
-    await fetch(`/api/model/${MODEL_NAME}/learning-type`, {
+    await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/learning-type`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ learning_type: type })
     });
@@ -437,7 +438,7 @@ function updateModeUI(type) {
 // ── Live Polling ─────────────────────────────────────────────
 async function pollLiveData() {
   try {
-    const res = await fetch(`/api/model/${MODEL_NAME}/live`);
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/live`);
     const data = await res.json();
     updatePrediction(data);
     updateSensors(data.sensors);
@@ -544,7 +545,7 @@ function togglePanel(id) {
 // ── Data Manager ─────────────────────────────────────────────
 async function loadDataHealth() {
   try {
-    const res = await fetch(`/api/model/${MODEL_NAME}/data-health`);
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/data-health`);
     const data = await res.json();
 
     // Warnings
@@ -582,7 +583,7 @@ async function loadDataHealth() {
 async function clearLabel(label) {
   if (!confirm(`Delete ALL observations for "${label}"? This cannot be undone.`)) return;
   try {
-    const res = await fetch(`/api/model/${MODEL_NAME}/label/${encodeURIComponent(label)}/data`, { method: 'DELETE' });
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/label/${encodeURIComponent(label)}/data`, { method: 'DELETE' });
     const data = await res.json();
     if (data.success) {
       showToast(`Cleared ${label} data`);
@@ -594,7 +595,7 @@ async function clearLabel(label) {
 async function retrainModel() {
   showToast('Retraining...');
   try {
-    const res = await fetch(`/api/model/${MODEL_NAME}/retrain`, { method: 'POST' });
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/retrain`, { method: 'POST' });
     const data = await res.json();
     if (data.success) {
       const acc = data.accuracy != null ? `${Math.round(data.accuracy * 100)}%` : 'N/A';
@@ -607,7 +608,7 @@ async function retrainModel() {
 // ── Confusion Matrix ─────────────────────────────────────────
 async function loadConfusionMatrix() {
   try {
-    const res = await fetch(`/api/model/${MODEL_NAME}/confusion-matrix`);
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/confusion-matrix`);
     const json = await res.json();
     const el = document.getElementById('confMatrix');
 
@@ -645,7 +646,7 @@ async function loadConfusionMatrix() {
 // ── Sensor Management ────────────────────────────────────────
 async function loadSensors() {
   try {
-    const res = await fetch(`/api/model/${MODEL_NAME}/sensors`);
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/sensors`);
     const json = await res.json();
     const el = document.getElementById('sensorList');
 
@@ -672,7 +673,7 @@ async function loadSensors() {
 async function deleteSensor(entityId) {
   if (!confirm(`Remove sensor "${entityId}" from ALL observations? This cannot be undone.`)) return;
   try {
-    const res = await fetch(`/api/model/${MODEL_NAME}/sensor/${encodeURIComponent(entityId)}`, { method: 'DELETE' });
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/sensor/${encodeURIComponent(entityId)}`, { method: 'DELETE' });
     const data = await res.json();
     if (data.success) {
       showToast(`Removed sensor`);
