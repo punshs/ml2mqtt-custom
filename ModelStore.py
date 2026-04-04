@@ -222,8 +222,8 @@ class ModelStore:
         return Path(self.modelPath).stat().st_size
 
     def _getSetting(self, name: str, default_value: Any) -> Any:
-        with self._db as conn:
-            row = conn.execute("SELECT value FROM Settings WHERE name = ?", (name,)).fetchone()
+        with self.lock, self._db:
+            row = self._db.execute("SELECT value FROM Settings WHERE name = ?", (name,)).fetchone()
             return row[0] if row else default_value
 
     def getDict(self, name: str) -> Optional[Dict[str, Any]]:
