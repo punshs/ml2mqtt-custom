@@ -10,7 +10,7 @@ class ModelManager:
         self._mqttClient = mqttClient
         self._models: Dict[str, ModelService] = {}
         self._modelsDir: Path = Path(modelsDir)
-        self._modelsDir.mkdir(exist_ok=True)
+        self._modelsDir.mkdir(parents=True, exist_ok=True)
 
         for modelFile in self._modelsDir.glob("*.db"):
             modelName = self.getModelName(modelFile)

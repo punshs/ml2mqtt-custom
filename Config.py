@@ -37,7 +37,7 @@ class Config:
     
     def getDataPath(self):
         if self._isHomeAssistant:
-            return "/data"
+            return "/config/ml2mqtt"
         else:
             return "."
 
