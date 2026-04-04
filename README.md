@@ -1,4 +1,14 @@
-## ML2MQTT
+## ML2MQTT (Custom Fork)
+
+This is a customized fork of the excellent [ML2MQTT by donutsoft](https://github.com/donutsoft/ml2mqtt), designed with specific stability improvements and extended Home Assistant sensor fusion.
+
+### ✨ Features of this Fork
+- **"Away" State Training:** Supports training for an "Away" state by injecting macro-presence data (like Google Home mode or `person` states) into the MQTT payload, giving the model crucial context for when no one is in the house.
+- **Thread-Safety Updates:** Resolves a recurrent crashing bug (`Recursive use of cursors not allowed`) caused by rapid, simultaneous SQLite database access from the background MQTT listener and the Web UI.
+- **Enhanced Sensor Fusion:** Optimized to mix continuous data (BLE distances) with highly accurate binary sensors (Aquara presence detectors, TV power states, smart plugs) to eliminate edge-case bouncing.
+- **Easy Upstream Sync:** Includes a handy `./update_from_upstream.sh` script to quickly fetch and merge the latest features from the original `donutsoft` repository at any time.
+
+---
 
 ### What is ML2MQTT?
 
