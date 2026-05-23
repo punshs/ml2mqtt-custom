@@ -3,3 +3,12 @@ __pycache__/
 .git/
 venv/
 .DS_Store
+models/
+*.db
+*.db-shm
+*.db-wal
+data/
+settings.json
+.env
+.env.local
+.venv/
