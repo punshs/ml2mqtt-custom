@@ -150,8 +150,14 @@ class GradientBoosted:
             X = pd.DataFrame([{}])
             
         X = X.reindex(columns=self._X_test.columns, fill_value=None)
-        # Gradient boosted handles np.nan natively, which represents missing values properly
-        X = X.fillna(np.nan)
+        
+        # Split filling logic to avoid setting np.nan in object (categorical) columns,
+        # which causes ufunc 'isnan' TypeError inside OrdinalEncoder.
+        for col in X.columns:
+            if col in self._categoricalCols:
+                X[col] = X[col].astype(object)
+            else:
+                X[col] = pd.to_numeric(X[col], errors='coerce').fillna(np.nan)
 
         try:
             y_pred = self._pipeline.predict(X)

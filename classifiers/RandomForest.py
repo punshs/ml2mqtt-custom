@@ -104,7 +104,14 @@ class RandomForest:
             X = pd.DataFrame([{}])
             
         X = X.reindex(columns=self._X_test.columns, fill_value=None)
-        X = X.fillna(-9999.0)
+        
+        # Split filling logic to avoid setting -9999.0 in object (categorical) columns,
+        # which causes ufunc 'isnan' TypeError inside OrdinalEncoder.
+        for col in X.columns:
+            if col in self._categoricalCols:
+                X[col] = X[col].astype(object)
+            else:
+                X[col] = pd.to_numeric(X[col], errors='coerce').fillna(-9999.0)
 
         try:
             y_pred = self._pipeline.predict(X)

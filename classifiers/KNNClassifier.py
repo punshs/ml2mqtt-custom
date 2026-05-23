@@ -84,6 +84,14 @@ class KNNClassifier:
         X = pd.DataFrame([sensorValues])
         X = X.reindex(columns=self._X_test.columns, fill_value=None)
 
+        # Split logic to avoid setting float/nan in object (categorical) columns,
+        # which causes ufunc 'isnan' TypeError inside OrdinalEncoder.
+        for col in X.columns:
+            if col in self._categoricalCols:
+                X[col] = X[col].astype(object)
+            else:
+                X[col] = pd.to_numeric(X[col], errors='coerce')
+
         try:
             y_pred = self._pipeline.predict(X)
             y_prob = self._pipeline.predict_proba(X)
