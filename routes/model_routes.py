@@ -645,9 +645,19 @@ def init_model_routes(model_manager: ModelManager):
 
     # ── Data Management APIs ─────────────────────────────────────────
 
-    @model_bp.route("/api/model/<string:modelName>/label/<string:label>/data", methods=["DELETE"])
+    @model_bp.route("/api/model/<string:modelName>/label/<string:label>/data", methods=["POST", "DELETE"])
     def clearLabelData(modelName: str, label: str) -> Response:
         """Delete all observations for a specific label."""
+        if request.method == "POST":
+            # Support method override parameter for browser/client compatibility
+            method_override = None
+            if request.is_json:
+                method_override = request.get_json().get("_method")
+            if not method_override:
+                method_override = request.args.get("_method")
+            if method_override != "DELETE":
+                return jsonify({"error": "Method override value must be DELETE"}), 405
+
         try:
             model = model_manager.getModel(modelName)
             if not model:
