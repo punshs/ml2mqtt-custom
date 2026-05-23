@@ -650,7 +650,7 @@ class ModelService:
     def getDataHealth(self) -> Dict[str, Any]:
         """Return data quality metrics for the training UI."""
         observations = self._modelstore.getObservations()
-        label_counts: Dict[str, int] = {}
+        label_counts: Dict[str, int] = {label: 0 for label in self.getLabels()}
         for obs in observations:
             label_counts[obs.label] = label_counts.get(obs.label, 0) + 1
 
