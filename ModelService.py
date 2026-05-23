@@ -375,9 +375,8 @@ class ModelService:
         self._modelstore.deleteObservationsByLabel(label)
 
         presavedLabels = self.getModelConfig("labels", [])
-        if label in presavedLabels:
-            presavedLabels.remove(label)
-        self.setModelConfig("labels", presavedLabels)
+        new_labels = [l for l in presavedLabels if l.lower() != label.lower()]
+        self.setModelConfig("labels", new_labels)
 
         # Rebuild the model after deletion
         self._populateModel()
@@ -634,8 +633,7 @@ class ModelService:
 
     def clearLabelData(self, label: str) -> Dict[str, Any]:
         """Delete all observations for a specific label and retrain."""
-        self._modelstore.deleteObservationsByLabel(label)
-        self._populateModel()
+        self.deleteObservationsByLabel(label)
         obs_count = len(self._modelstore.getObservations())
         return {"deleted_label": label, "remaining_observations": obs_count}
 
