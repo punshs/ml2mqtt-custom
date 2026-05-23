@@ -296,6 +296,25 @@ class ModelStore:
             observation.sensorValues.pop(entityName)
             self.addObservation(observation.label, observation.sensorValues, observation.time)
 
+    def addSensor(self, name: str, sensorType: str = "float") -> None:
+        t = self.TYPE_FLOAT if sensorType == "float" else self.TYPE_STRING
+        with self.lock, self._db:
+            try:
+                self._db.execute("INSERT INTO SensorKeys (name, type) VALUES (?, ?)", (name, t))
+                self._db.commit()
+            except sqlite3.IntegrityError:
+                pass
+        if name not in self._entityKeySet:
+            self._entityKeys.append(EntityKey(name, t))
+            self._entityKeySet.add(name)
+
+    def getLabelObservationCount(self, label: str) -> int:
+        with self.lock:
+            cursor = self._db.cursor()
+            cursor.execute("SELECT COUNT(*) FROM Observations WHERE label = ?", (label,))
+            row = cursor.fetchone()
+            return row[0] if row else 0
+
     # -- Processor management --
 
     def addPreprocessor(self, type_: str, params: Dict[str, Any], order: Optional[int] = None) -> None:

@@ -210,7 +210,15 @@ class ModelService:
         if activeLabel:
             learningType = self.getLearningType()
             shouldSave = False
-            if learningType == "LAZY":
+            if learningType == "AUTO":
+                support = self._modelstore.getLabelObservationCount(activeLabel)
+                if support < 50:
+                    shouldSave = True
+                else:
+                    prediction, confidence = self._model.predictLabel(entityValues)
+                    if prediction != activeLabel or confidence < 0.8:
+                        shouldSave = True
+            elif learningType == "LAZY":
                 prediction, confidence = self._model.predictLabel(entityValues)
                 if prediction != activeLabel or confidence < 0.8:
                     shouldSave = True
@@ -501,7 +509,7 @@ class ModelService:
 
     def getLearningType(self):
         settings = self.getModelSettings() or {}
-        learningType = settings.get("learning_type", "DISABLED")
+        learningType = settings.get("learning_type", "AUTO")
         self._logger.info(f"Getting learning type: {learningType}")
         return learningType
     
@@ -696,6 +704,15 @@ class ModelService:
         except Exception as e:
             self._logger.error(f"Confusion matrix failed: {e}")
             return None
+
+    def addSensor(self, entity_name: str, sensor_type: str = "float") -> Dict[str, Any]:
+        """Add a sensor to the model and retrain."""
+        try:
+            self._modelstore.addSensor(entity_name, sensor_type)
+            self._populateModel()
+            return {"added": entity_name, "success": True}
+        except Exception as e:
+            return {"error": str(e), "success": False}
 
     def deleteSensor(self, entity_name: str) -> Dict[str, Any]:
         """Remove a sensor from the model and all observations, then retrain."""

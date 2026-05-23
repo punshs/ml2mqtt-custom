@@ -80,7 +80,7 @@ def init_model_routes(model_manager: ModelManager):
             newModel.addPreprocessor("type_caster", { 'sensor': [{"SELECT_ALL": True }]})
             newModel.addPreprocessor("null_handler", { 'sensor': [{"SELECT_ALL": True }], 'replacementType': 'float', 'nullReplacement': defaultValue})
             newModel.addPostprocessor("only_diff", {})
-            newModel.setLearningType("EAGER")
+            newModel.setLearningType("AUTO")
             newModel.subscribeToMqttTopics()
 
             return redirect(url_for("model.home"))
@@ -120,7 +120,7 @@ def init_model_routes(model_manager: ModelManager):
         newModel.addPreprocessor("type_caster", {'sensor': [{"SELECT_ALL": True}]})
         newModel.addPreprocessor("null_handler", {'sensor': [{"SELECT_ALL": True}], 'replacementType': 'float', 'nullReplacement': defaultValue})
         newModel.addPostprocessor("only_diff", {})
-        newModel.setLearningType("EAGER")
+        newModel.setLearningType("AUTO")
         newModel.subscribeToMqttTopics()
 
         return jsonify({"success": True, "model_name": modelName})
@@ -705,9 +705,42 @@ def init_model_routes(model_manager: ModelManager):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @model_bp.route("/api/model/<string:modelName>/sensor/<path:entityName>", methods=["DELETE"])
+    @model_bp.route("/api/model/<string:modelName>/sensor", methods=["POST"])
+    def addSensor(modelName: str) -> Response:
+        """Add a sensor to the model."""
+        try:
+            data = request.get_json(force=True) if request.is_json else {}
+            entity_id = data.get("entity_id")
+            sensor_type = data.get("type", "float")
+            
+            if not entity_id:
+                return jsonify({"error": "Missing entity_id"}), 400
+                
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+                
+            result = model.addSensor(entity_id, sensor_type)
+            if result.get("success"):
+                return jsonify(result)
+            return jsonify(result), 400
+        except Exception as e:
+            logger.exception(f"Error adding sensor: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/sensor/<path:entityName>", methods=["POST", "DELETE"])
     def deleteSensor(modelName: str, entityName: str) -> Response:
         """Remove a sensor from the model and all observations."""
+        if request.method == "POST":
+            # Support method override parameter for browser/client compatibility
+            method_override = None
+            if request.is_json:
+                method_override = request.get_json().get("_method")
+            if not method_override:
+                method_override = request.args.get("_method")
+            if method_override != "DELETE":
+                return jsonify({"error": "Method override value must be DELETE"}), 405
+
         try:
             model = model_manager.getModel(modelName)
             if not model:
