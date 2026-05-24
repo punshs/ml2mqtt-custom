@@ -247,7 +247,7 @@ class ModelService:
             shouldSave = False
             if learningType == "AUTO":
                 support = self._modelstore.getLabelObservationCount(activeLabel)
-                if support < 100:
+                if support < 200:
                     shouldSave = True
                 else:
                     prediction, confidence = self._model.predictLabel(entityValues)
