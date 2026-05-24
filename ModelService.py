@@ -61,6 +61,7 @@ class ModelService:
         self._smoothingWindow: int = 5
         self._newObsCount: int = 0  # auto-retrain counter
         self._autoRetrainThreshold: int = 20
+        self._modelError: Optional[str] = None
         self._populateModel()
         self._loadPostprocessors()
         self._loadPreprocessors()
@@ -84,16 +85,50 @@ class ModelService:
         paramsForThisModel = self._allParams.get(self._modelType, {})
 
         self._logger.info(f"Loading with settings {settings}")
-
-        if self._modelType == "KNN":
-            self._model = KNNClassifier(params=paramsForThisModel)
-        elif self._modelType == "GradientBoosted":
-            self._model = GradientBoosted(params=paramsForThisModel)
-        else:
-            self._model = RandomForest(params=paramsForThisModel)
-
         observations = self._modelstore.getObservations()
-        self._model.populateDataframe(observations)
+
+        try:
+            if self._modelType == "KNN":
+                self._model = KNNClassifier(params=paramsForThisModel)
+            elif self._modelType == "GradientBoosted":
+                self._model = GradientBoosted(params=paramsForThisModel)
+            else:
+                self._model = RandomForest(params=paramsForThisModel)
+
+            self._model.populateDataframe(observations)
+
+            # Reset error message if trained successfully
+            if getattr(self._model, "_modelTrained", False):
+                self._modelError = None
+            else:
+                # Determine specific error reason
+                if len(observations) < 5:
+                    self._modelError = "Insufficient data: Collect at least 5 observations."
+                elif len(set(obs.label for obs in observations)) < 2:
+                    self._modelError = "Single-class dataset: Train with at least 2 distinct rooms."
+                else:
+                    self._modelError = f"Model training failed for {self._modelType}."
+
+        except Exception as e:
+            self._logger.exception("Model training crashed")
+            self._modelError = f"Training crashed: {str(e)}"
+
+        # Auto-recovery: If GradientBoosted or KNN failed to train but we have enough data (>=2 classes, >=10 obs),
+        # automatically fall back to RandomForest.
+        if (self._modelError and self._modelType != "RandomForest" and 
+                len(observations) >= 10 and len(set(obs.label for obs in observations)) >= 2):
+            self._logger.warning("Selected model %s failed to train. Triggering auto-recovery fallback to RandomForest.", self._modelType)
+            self._modelType = "RandomForest"
+            self._model = RandomForest(params={})
+            try:
+                self._model.populateDataframe(observations)
+                if getattr(self._model, "_modelTrained", False):
+                    self._modelError = "Auto-recovered: Fell back to RandomForest because GradientBoosted failed."
+                else:
+                    self._modelError = "Recovery failed: RandomForest training also failed."
+            except Exception as e:
+                self._logger.exception("Fallback RandomForest training crashed")
+                self._modelError = f"Recovery crashed: {str(e)}"
 
     def _loadPostprocessors(self) -> None:
         """Load postprocessors from model settings."""
@@ -236,8 +271,18 @@ class ModelService:
                     self._newObsCount = 0
                     self._populateModel()
 
-        prediction, confidence = self._model.predictLabel(entityValues)
-        confidence = round(float(confidence), 4)
+        try:
+            prediction, confidence = self._model.predictLabel(entityValues)
+        except Exception as e:
+            self._logger.exception("Prediction failed, attempting retraining recovery.")
+            self._modelError = f"Prediction failed: {str(e)}"
+            self._populateModel()
+            try:
+                prediction, confidence = self._model.predictLabel(entityValues)
+            except Exception:
+                prediction, confidence = None, 0.0
+
+        confidence = round(float(confidence), 4) if confidence is not None else 0.0
 
         # Store raw prediction for the live API
         self._lastPrediction = prediction
@@ -622,6 +667,8 @@ class ModelService:
             "label_stats": {k: v.get("support", 0) for k, v in label_stats.items()},
             "total_label_counts": total_label_counts,
             "feature_importance": {k: float(v) for k, v in (self._model.getFeatureImportance() or {}).items()} if hasattr(self._model, 'getFeatureImportance') else None,
+            "model_error": self._modelError,
+            "model_trained": getattr(self._model, "_modelTrained", False),
         }
 
     def setSensorDisplayName(self, entity_id: str, display_name: str) -> None:
