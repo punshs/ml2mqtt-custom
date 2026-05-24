@@ -600,7 +600,13 @@ class ModelService:
 
         # Get observation stats per label
         label_stats = self.getLabelStats() or {}
-        obs_count = len(self._modelstore.getObservations())
+        observations = self._modelstore.getObservations()
+        obs_count = len(observations)
+
+        # Calculate true label counts in database
+        total_label_counts = {label: 0 for label in self.getLabels()}
+        for obs in observations:
+            total_label_counts[obs.label] = total_label_counts.get(obs.label, 0) + 1
 
         return {
             "prediction": self._lastPrediction,
@@ -614,6 +620,7 @@ class ModelService:
             "accuracy": float(self.getAccuracy()) if self.getAccuracy() is not None else None,
             "observation_count": obs_count,
             "label_stats": {k: v.get("support", 0) for k, v in label_stats.items()},
+            "total_label_counts": total_label_counts,
             "feature_importance": {k: float(v) for k, v in (self._model.getFeatureImportance() or {}).items()} if hasattr(self._model, 'getFeatureImportance') else None,
         }
 

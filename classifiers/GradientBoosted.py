@@ -88,6 +88,12 @@ class GradientBoosted:
         X = pd.DataFrame(data)
         y = self.labelEncoder.fit_transform(labels)
 
+        num_classes = len(np.unique(y))
+        if num_classes < 2:
+            self.logger.warning("Need at least 2 distinct classes to train GradientBoosted model.")
+            self._modelTrained = False
+            return
+
         self._categoricalCols = X.select_dtypes(
             include=["object", "category"]
         ).columns.tolist()
