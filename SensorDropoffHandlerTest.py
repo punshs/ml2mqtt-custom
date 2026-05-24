@@ -5,7 +5,7 @@ from preprocessors.sensor_dropoff import SensorDropoffHandler
 class SensorDropoffHandlerTest(unittest.TestCase):
     def setUp(self):
         # Initialize handler with dummy dbId
-        self.handler = SensorDropoffHandler(dbId=1, params={'sensor': [{'SELECT_ALL': True}]})
+        self.handler = SensorDropoffHandler(dbId=1, sensor=[{'SELECT_ALL': True}])
 
     def test_short_name_generation(self):
         """Test extraction of short sensor names from long entity IDs."""

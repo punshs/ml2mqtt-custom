@@ -95,17 +95,17 @@ class ModelService:
             else:
                 self._model = RandomForest(params=paramsForThisModel)
 
-            self._model.populateDataframe(observations)
-
-            # Reset error message if trained successfully
-            if getattr(self._model, "_modelTrained", False):
-                self._modelError = None
+            unique_labels = len(set(obs.label for obs in observations))
+            if unique_labels < 2:
+                self._model._modelTrained = False
+                self._modelError = "Single-class dataset: Train with at least 2 distinct rooms."
+            elif len(observations) < 5:
+                self._model._modelTrained = False
+                self._modelError = "Insufficient data: Collect at least 5 observations."
             else:
-                # Determine specific error reason
-                if len(observations) < 5:
-                    self._modelError = "Insufficient data: Collect at least 5 observations."
-                elif len(set(obs.label for obs in observations)) < 2:
-                    self._modelError = "Single-class dataset: Train with at least 2 distinct rooms."
+                self._model.populateDataframe(observations)
+                if getattr(self._model, "_modelTrained", False):
+                    self._modelError = None
                 else:
                     self._modelError = f"Model training failed for {self._modelType}."
 
@@ -247,7 +247,7 @@ class ModelService:
             shouldSave = False
             if learningType == "AUTO":
                 support = self._modelstore.getLabelObservationCount(activeLabel)
-                if support < 50:
+                if support < 100:
                     shouldSave = True
                 else:
                     prediction, confidence = self._model.predictLabel(entityValues)
@@ -404,10 +404,12 @@ class ModelService:
         # Generate observations with jittered sensor values
         base_time = time_module.time()
         for i in range(count):
-            sensor_values = {
-                name: null_value + random.uniform(-0.5, 0.5)
-                for name in entity_names
-            }
+            sensor_values = {}
+            for name in entity_names:
+                if name.startswith("binary_sensor.") or name.startswith("input_boolean."):
+                    sensor_values[name] = 0.0
+                else:
+                    sensor_values[name] = null_value + random.uniform(-0.5, 0.5)
             sorted_vals = self._modelstore.sortEntityValues(sensor_values, True)
             self._modelstore.addObservation(label, sorted_vals, base_time - (i * 10))
 
@@ -685,9 +687,13 @@ class ModelService:
 
     # ── Data Management ──────────────────────────────────────────────
 
-    def clearLabelData(self, label: str) -> Dict[str, Any]:
+    def clearLabelData(self, label: str, keep_config: bool = False) -> Dict[str, Any]:
         """Delete all observations for a specific label and retrain."""
-        self.deleteObservationsByLabel(label)
+        if keep_config:
+            self._modelstore.deleteObservationsByLabel(label)
+        else:
+            self.deleteObservationsByLabel(label)
+        self._populateModel()
         obs_count = len(self._modelstore.getObservations())
         return {"deleted_label": label, "remaining_observations": obs_count}
 

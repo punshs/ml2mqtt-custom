@@ -662,7 +662,14 @@ def init_model_routes(model_manager: ModelManager):
             model = model_manager.getModel(modelName)
             if not model:
                 return jsonify({"error": f"Model '{modelName}' not found"}), 404
-            result = model.clearLabelData(label)
+            
+            keep_config = False
+            if request.is_json:
+                keep_config = request.get_json().get("keep_config", False)
+            if not keep_config:
+                keep_config = request.args.get("keep_config") in ["true", "1", "True"]
+
+            result = model.clearLabelData(label, keep_config=keep_config)
             return jsonify({"success": True, **result})
         except Exception as e:
             logger.exception(f"Error clearing label data: {e}")
