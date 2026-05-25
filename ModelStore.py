@@ -262,6 +262,7 @@ class ModelStore:
             return [row[0] for row in cursor.execute("SELECT DISTINCT label FROM Observations ORDER BY label ASC")]
 
     def deleteObservationsByLabel(self, label: str) -> None:
+        self.backup()
         with self.lock, self._db:
             self._db.execute("DELETE FROM Observations WHERE label = ?", (label,))
             self._db.commit()
@@ -275,6 +276,7 @@ class ModelStore:
         """
         Deletes all observations with a timestamp greater than or equal to the provided timestamp.
         """
+        self.backup()
         with self.lock, self._db:
             self._db.execute("DELETE FROM Observations WHERE time >= ?", (timestamp,))
             self._db.commit()
@@ -375,6 +377,46 @@ class ModelStore:
         cursor = self._db.cursor()
         cursor.execute(f"SELECT ROWID, type, params, order_num FROM {table} ORDER BY order_num ASC")
         return [ProcessorEntry(id=row[0], type=row[1], params=json.loads(row[2]), order=row[3]) for row in cursor.fetchall()]
+
+    def backup(self) -> Optional[str]:
+        """Creates a timestamped backup copy of the current database file, pruning older ones to keep max 10 backups."""
+        import shutil
+        import datetime
+        from pathlib import Path
+        db_path = Path(self.modelPath)
+        if not db_path.exists():
+            return None
+        
+        backups_dir = db_path.parent / "backups"
+        backups_dir.mkdir(exist_ok=True)
+        
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = backups_dir / f"{db_path.stem}_{timestamp}.db"
+        
+        try:
+            shutil.copy2(db_path, backup_file)
+            self.logger.info("Created database backup at: %s", backup_file)
+            
+            # Prune old backups (keep last 10)
+            backups = sorted(backups_dir.glob(f"{db_path.stem}_*.db"), key=lambda x: x.stat().st_mtime)
+            while len(backups) > 10:
+                oldest = backups.pop(0)
+                oldest.unlink()
+                self.logger.info("Pruned old backup: %s", oldest)
+                
+            return str(backup_file)
+        except Exception as e:
+            self.logger.error("Failed to create database backup: %s", e)
+            return None
+
+    def deleteObservationsInRange(self, start: float, end: float) -> int:
+        """Deletes observations within a specific timestamp range (inclusive) and returns count."""
+        with self.lock, self._db:
+            cursor = self._db.cursor()
+            cursor.execute("DELETE FROM Observations WHERE time >= ? AND time <= ?", (start, end))
+            deleted_count = cursor.rowcount
+            self._db.commit()
+            return deleted_count
 
     def close(self) -> None:
         try:

@@ -640,7 +640,17 @@ def init_model_routes(model_manager: ModelManager):
                 return jsonify({"error": f"Model '{modelName}' not found"}), 404
             model.setLearningType(data["learning_type"])
             return jsonify({"success": True, "learning_type": data["learning_type"]})
+    @model_bp.route("/api/model/<string:modelName>/session/undo", methods=["POST"])
+    def undoLastSession(modelName: str) -> Response:
+        """Undo the current or most recent collection session."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            result = model.undoLastSession()
+            return jsonify(result)
         except Exception as e:
+            logger.exception(f"Error undoing last session for model '{modelName}': {e}")
             return jsonify({"error": str(e)}), 500
 
     # ── Data Management APIs ─────────────────────────────────────────

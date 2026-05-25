@@ -128,5 +128,76 @@ class TestModelService(unittest.TestCase):
         self.service.startCollecting("Office")
         self.assertEqual(self.service.getLearningType(), "EAGER")
 
+    def test_undo_last_session(self):
+        """Test that undoLastSession deletes observations from the session window and clears session config."""
+        # 1. Start collecting
+        self.service.startCollecting("Office")
+        start_time = self.service.getModelConfig("last_session_start", 0)
+        self.assertIsNotNone(start_time)
+        self.assertEqual(self.service.getModelConfig("last_session_label", ""), "Office")
+
+        # 2. Add some observations inside and outside the session window
+        self.db.addObservation("Office", {"Basement": 1.0}, assignedTime=start_time + 0.005)
+        self.db.addObservation("Office", {"Basement": 1.0}, assignedTime=start_time + 0.010)
+        # observation before session start
+        self.db.addObservation("Office", {"Basement": 1.0}, assignedTime=start_time - 1.000)
+
+        self.service.stopCollecting()
+        end_time = self.service.getModelConfig("last_session_end", 0)
+        self.assertIsNotNone(end_time)
+
+        # 3. Confirm we have 3 observations in total
+        obs_before = self.db.getObservations()
+        self.assertEqual(len(obs_before), 3)
+
+        # 4. Perform undo
+        res = self.service.undoLastSession()
+        self.assertTrue(res["success"])
+        self.assertEqual(res["deleted_count"], 2)
+
+        # 5. Confirm only 1 observation remains (the one before session start)
+        obs = self.db.getObservations()
+        self.assertEqual(len(obs), 1)
+        self.assertAlmostEqual(obs[0].time, start_time - 1.000, places=4)
+
+        # 6. Verify session markers are cleared
+        self.assertIsNone(self.service.getModelConfig("last_session_start", None))
+        self.assertIsNone(self.service.getModelConfig("last_session_end", None))
+        self.assertIsNone(self.service.getModelConfig("last_session_label", None))
+
+    def test_database_backup(self):
+        """Test that backup method creates backups and prunes old ones."""
+        from pathlib import Path
+        import shutil
+
+        # 1. Create a backup
+        backup_path_str = self.db.backup()
+        self.assertIsNotNone(backup_path_str)
+        backup_path = Path(backup_path_str)
+        self.assertTrue(backup_path.exists())
+        self.assertEqual(backup_path.parent.name, "backups")
+
+        # 2. Simulate having 12 backups
+        backups_dir = backup_path.parent
+        # Clean any existing files first
+        for f in backups_dir.glob("*.db"):
+            f.unlink()
+
+        # Create 12 dummy files
+        for i in range(12):
+            dummy = backups_dir / f"test_modelservice_{i:02d}.db"
+            dummy.touch()
+            # Set mtime so they have predictable creation order
+            import os
+            os.utime(dummy, (time.time() - (100 - i), time.time() - (100 - i)))
+
+        # Run backup again, it should prune the oldest 3 (leaving exactly 10)
+        self.db.backup()
+        remaining_backups = sorted(backups_dir.glob("*.db"), key=lambda x: x.stat().st_mtime)
+        self.assertEqual(len(remaining_backups), 10)
+
+        # Clean up backups dir
+        shutil.rmtree(backups_dir)
+
 if __name__ == '__main__':
     unittest.main()

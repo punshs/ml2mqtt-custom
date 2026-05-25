@@ -31,6 +31,13 @@
         <span id="collectText">START COLLECTING</span>
       </button>
     </div>
+    <!-- Undo Session Button -->
+    <div class="collection-row">
+      <button class="undo-btn" id="undoSessionBtn" onclick="undoSession()" style="display: none;">
+        <span class="collect-icon">↩</span>
+        <span id="undoSessionText">UNDO SESSION</span>
+      </button>
+    </div>
     <div class="mode-pills">
       <button class="mode-pill active" id="modeEager" onclick="setLearningType('EAGER')">Eager</button>
       <button class="mode-pill" id="modeLazy" onclick="setLearningType('LAZY')">Lazy</button>
@@ -207,6 +214,16 @@
   .collect-icon { font-size: 1.2rem; transition: color 0.3s ease; }
   .collect-btn.active .collect-icon { color: #ff4444; animation: blink 1s ease-in-out infinite; }
   @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .undo-btn {
+    width: 100%; max-width: 320px; padding: 0.8rem 1.5rem;
+    border-radius: 12px; border: 2px solid #5c6bc0; background: rgba(92, 107, 192, 0.15);
+    color: #9fa8da; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 0.75rem;
+    transition: all 0.3s ease; -webkit-tap-highlight-color: transparent;
+  }
+  .undo-btn:hover { background: rgba(92, 107, 192, 0.25); }
+  .undo-btn:active { transform: scale(0.97); }
 
   .mode-pills { display: flex; border-radius: 8px; overflow: hidden; border: 1px solid #2a4a6a; }
   .mode-pill {
@@ -401,6 +418,24 @@ async function stopCollecting() {
   } catch (e) { showToast('Error stopping collection'); }
 }
 
+async function undoSession() {
+  const undoText = document.getElementById('undoSessionText').textContent;
+  if (!confirm(`Delete all observations from "${undoText}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`${BASE_URL}/api/model/${MODEL_NAME}/session/undo`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Undone! Deleted ${data.deleted_count} observations.`);
+      pollLiveData();
+      if (document.getElementById('dataPanel').style.display !== 'none') {
+        loadDataHealth();
+      }
+    } else {
+      showToast(data.error || 'Failed to undo session');
+    }
+  } catch (e) { showToast('Error undoing session'); }
+}
+
 function updateCollectionUI() {
   const btn = document.getElementById('collectBtn');
   const text = document.getElementById('collectText');
@@ -525,6 +560,17 @@ function updateFromServerState(data) {
   document.querySelectorAll('.pill').forEach(p => {
     p.classList.toggle('selected', p.dataset.label === selectedLabel);
   });
+
+  const undoBtn = document.getElementById('undoSessionBtn');
+  const undoText = document.getElementById('undoSessionText');
+  if (undoBtn && undoText) {
+    if (data.has_undo) {
+      undoBtn.style.display = 'flex';
+      undoText.textContent = `UNDO SESSION (${data.last_session_label})`;
+    } else {
+      undoBtn.style.display = 'none';
+    }
+  }
 }
 
 // ── Panel Toggle ─────────────────────────────────────────────

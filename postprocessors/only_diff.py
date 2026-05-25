@@ -38,7 +38,7 @@ class OnlyDiffPostprocessor(BasePostprocessor):
         Returns:
             Tuple of (observation, label or None if same as previous)
         """
-        if label == self.last_label and confidence == self.last_confidence:
+        if label == self.last_label:
             return observation, None
         
         self.last_label = label

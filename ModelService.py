@@ -605,6 +605,10 @@ class ModelService:
     def startCollecting(self, label: str) -> None:
         """Start collecting observations with the given label."""
         self._collectingLabel = label
+        import time
+        self.setModelConfig("last_session_start", time.time())
+        self.setModelConfig("last_session_label", label)
+        self.setModelConfig("last_session_end", None)
         # Ensure learning type is active when starting collection
         currentType = self.getLearningType()
         if currentType == "DISABLED":
@@ -613,8 +617,38 @@ class ModelService:
 
     def stopCollecting(self) -> None:
         """Stop collecting observations."""
+        import time
+        if self._collectingLabel:
+            self.setModelConfig("last_session_end", time.time())
         self._collectingLabel = None
         self._logger.info("Stopped collecting")
+
+    def undoLastSession(self) -> Dict[str, Any]:
+        """Deletes all observations collected during the current or most recent collection session."""
+        start = self.getModelConfig("last_session_start", None)
+        if start is None:
+            return {"success": False, "error": "No recent collection session found to undo."}
+
+        import time
+        end = self.getModelConfig("last_session_end", None)
+        if self.isCollecting() or end is None or end < start:
+            end = time.time()
+
+        # Create a database backup before deletion
+        self._modelstore.backup()
+
+        # Delete observations in range [start, end]
+        count = self._modelstore.deleteObservationsInRange(start, end)
+
+        # Clear session markers
+        self.setModelConfig("last_session_start", None)
+        self.setModelConfig("last_session_end", None)
+        self.setModelConfig("last_session_label", None)
+
+        # Retrain the model
+        self._populateModel()
+
+        return {"success": True, "deleted_count": count}
 
     def isCollecting(self) -> bool:
         return self._collectingLabel is not None
@@ -680,6 +714,8 @@ class ModelService:
             "feature_importance": {k: float(v) for k, v in (self._model.getFeatureImportance() or {}).items()} if hasattr(self._model, 'getFeatureImportance') else None,
             "model_error": self._modelError,
             "model_trained": getattr(self._model, "_modelTrained", False),
+            "has_undo": self.getModelConfig("last_session_start", None) is not None,
+            "last_session_label": self.getModelConfig("last_session_label", None),
         }
 
     def setSensorDisplayName(self, entity_id: str, display_name: str) -> None:
