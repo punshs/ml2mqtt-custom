@@ -293,7 +293,7 @@ class ModelStore:
             self._db.commit()
 
         for observation in observations:
-            observation.sensorValues.pop(entityName)
+            observation.sensorValues.pop(entityName, None)
             self.addObservation(observation.label, observation.sensorValues, observation.time)
 
     def addSensor(self, name: str, sensorType: str = "float") -> None:
