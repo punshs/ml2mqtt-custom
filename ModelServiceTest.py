@@ -199,5 +199,66 @@ class TestModelService(unittest.TestCase):
         # Clean up backups dir
         shutil.rmtree(backups_dir)
 
+    def test_rolling_average_math(self):
+        """Test that RollingAverage divides correctly by active window length (not global sensors)."""
+        from preprocessors.rolling_average import RollingAverage
+        
+        # Initialize preprocessor with window size 3 and target sensor
+        preprocessor = RollingAverage(dbId=1, windowSize=3, sensor="sensor.temp")
+        state = {}
+        
+        # First observation: value is 2.0 (length 1) -> average should be 2.0
+        obs1 = {"sensor.temp": 2.0}
+        res1 = preprocessor.process(obs1, state)
+        self.assertEqual(res1["sensor.temp"], 2.0)
+        
+        # Second observation: value is 4.0 (length 2) -> average should be (2+4)/2 = 3.0
+        obs2 = {"sensor.temp": 4.0}
+        res2 = preprocessor.process(obs2, state)
+        self.assertEqual(res2["sensor.temp"], 3.0)
+        
+        # Third observation: value is 6.0 (length 3) -> average should be (2+4+6)/3 = 4.0
+        obs3 = {"sensor.temp": 6.0}
+        res3 = preprocessor.process(obs3, state)
+        self.assertEqual(res3["sensor.temp"], 4.0)
+
+        # Fourth observation: value is 8.0 (length 3, oldest 2.0 popped) -> average should be (4+6+8)/3 = 6.0
+        obs4 = {"sensor.temp": 8.0}
+        res4 = preprocessor.process(obs4, state)
+        self.assertEqual(res4["sensor.temp"], 6.0)
+
+    def test_only_diff_postprocessor(self):
+        """Test that OnlyDiffPostprocessor drops results unless the label changes, ignoring confidence."""
+        from postprocessors.only_diff import OnlyDiffPostprocessor
+        
+        postprocessor = OnlyDiffPostprocessor(dbId=1)
+        
+        # 1. First prediction: "Office" (confidence 0.9) -> should not drop (returns "Office")
+        obs, res1 = postprocessor.process({}, "Office", 0.9)
+        self.assertEqual(res1, "Office")
+        
+        # 2. Second prediction: "Office" (confidence 0.8) -> should drop (returns None)
+        obs, res2 = postprocessor.process({}, "Office", 0.8)
+        self.assertIsNone(res2)
+        
+        # 3. Third prediction: "Kitchen" (confidence 0.8) -> should not drop (returns "Kitchen")
+        obs, res3 = postprocessor.process({}, "Kitchen", 0.8)
+        self.assertEqual(res3, "Kitchen")
+
+    def test_delete_entity_backup(self):
+        """Test that deleteEntity triggers a database backup."""
+        # Setup backup path monitoring
+        self.db.backup = MagicMock(return_value="mock_backup.db")
+        
+        # Add dummy sensor and observation so it's registered
+        self.db.addSensor("sensor.dummy", "float")
+        self.db.addObservation("Office", {"sensor.dummy": 1.0})
+        
+        # Trigger deleteEntity
+        self.db.deleteEntity("sensor.dummy")
+        
+        # Verify backup was called
+        self.db.backup.assert_called_once()
+
 if __name__ == '__main__':
     unittest.main()

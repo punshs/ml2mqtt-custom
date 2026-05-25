@@ -285,6 +285,7 @@ class ModelStore:
         if entityName not in self._entityKeySet:
             raise ValueError("Entity not found")
         
+        self.backup()
         observations = self.getObservations()
         self._entityKeys = [ek for ek in self._entityKeys if ek.name != entityName]
         self._entityKeySet.remove(entityName)
@@ -394,7 +395,7 @@ class ModelStore:
         backup_file = backups_dir / f"{db_path.stem}_{timestamp}.db"
         
         try:
-            shutil.copy2(db_path, backup_file)
+            shutil.copyfile(db_path, backup_file)
             self.logger.info("Created database backup at: %s", backup_file)
             
             # Prune old backups (keep last 10)
