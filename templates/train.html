@@ -430,7 +430,7 @@ async function setLearningType(type) {
 
 function updateModeUI(type) {
   document.getElementById('modeEager').classList.toggle('active', type === 'EAGER');
-  document.getElementById('modeLazy').classList.toggle('active', type === 'LAZY');
+  document.getElementById('modeLazy').classList.toggle('active', type === 'LAZY' || type === 'AUTO');
   document.getElementById('modeHint').textContent = type === 'EAGER'
     ? 'Eager: saves every reading' : 'Lazy: saves only wrong predictions';
 }

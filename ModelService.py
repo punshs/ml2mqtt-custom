@@ -61,6 +61,7 @@ class ModelService:
         self._smoothingWindow: int = 5
         self._newObsCount: int = 0  # auto-retrain counter
         self._autoRetrainThreshold: int = 20
+        self._lastSaveTimes: Dict[str, float] = {}
         self._modelError: Optional[str] = None
         self._populateModel()
         self._loadPostprocessors()
@@ -249,27 +250,35 @@ class ModelService:
                 support = self._modelstore.getLabelObservationCount(activeLabel)
                 if support < 200:
                     shouldSave = True
-                else:
+                elif getattr(self._model, "_modelTrained", False):
                     prediction, confidence = self._model.predictLabel(entityValues)
                     if prediction != activeLabel or confidence < 0.8:
                         shouldSave = True
             elif learningType == "LAZY":
-                prediction, confidence = self._model.predictLabel(entityValues)
-                if prediction != activeLabel or confidence < 0.8:
+                if getattr(self._model, "_modelTrained", False):
+                    prediction, confidence = self._model.predictLabel(entityValues)
+                    if prediction != activeLabel or confidence < 0.8:
+                        shouldSave = True
+                else:
                     shouldSave = True
             elif learningType == "EAGER":
                 shouldSave = True
 
             if shouldSave:
-                sortedVals = self._modelstore.sortEntityValues(entityMap, True)
-                self._logger.info("Adding training observation for label: %s", activeLabel)
-                self._modelstore.addObservation(activeLabel, sortedVals)
-                self._newObsCount += 1
-                # Auto-retrain every N observations
-                if self._newObsCount >= self._autoRetrainThreshold:
-                    self._logger.info("Auto-retraining after %d new observations", self._newObsCount)
-                    self._newObsCount = 0
-                    self._populateModel()
+                import time
+                now = time.time()
+                last_save = self._lastSaveTimes.get(activeLabel, 0.0)
+                if now - last_save >= 10.0:
+                    self._lastSaveTimes[activeLabel] = now
+                    sortedVals = self._modelstore.sortEntityValues(entityMap, True)
+                    self._logger.info("Adding training observation for label: %s", activeLabel)
+                    self._modelstore.addObservation(activeLabel, sortedVals)
+                    self._newObsCount += 1
+                    # Auto-retrain every N observations
+                    if self._newObsCount >= self._autoRetrainThreshold:
+                        self._logger.info("Auto-retraining after %d new observations", self._newObsCount)
+                        self._newObsCount = 0
+                        self._populateModel()
 
         try:
             prediction, confidence = self._model.predictLabel(entityValues)
@@ -596,10 +605,10 @@ class ModelService:
     def startCollecting(self, label: str) -> None:
         """Start collecting observations with the given label."""
         self._collectingLabel = label
-        # Ensure learning type is at least EAGER when starting collection
+        # Ensure learning type is active when starting collection
         currentType = self.getLearningType()
         if currentType == "DISABLED":
-            self.setLearningType("EAGER")
+            self.setLearningType("AUTO")
         self._logger.info(f"Started collecting for label: {label} (mode: {self.getLearningType()})")
 
     def stopCollecting(self) -> None:

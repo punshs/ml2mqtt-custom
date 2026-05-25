@@ -71,7 +71,8 @@ document.querySelector('button[name="action"][value="tune"]').addEventListener("
 window.addEventListener("DOMContentLoaded", () => {
   const slider = document.getElementById('learningTypeSlider');
   const values = JSON.parse(slider.dataset.values);
-  const current = slider.dataset.current;
+  let current = slider.dataset.current;
+  if (current === "AUTO") current = "LAZY";
   const index = values.indexOf(current);
   if (index >= 0) slider.value = index;
 
