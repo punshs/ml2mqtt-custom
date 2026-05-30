@@ -268,7 +268,7 @@ class ModelService:
                 import time
                 now = time.time()
                 last_save = self._lastSaveTimes.get(activeLabel, 0.0)
-                if now - last_save >= 10.0:
+                if now - last_save >= 4.5:
                     self._lastSaveTimes[activeLabel] = now
                     sortedVals = self._modelstore.sortEntityValues(entityMap, True)
                     self._logger.info("Adding training observation for label: %s", activeLabel)
@@ -714,6 +714,8 @@ class ModelService:
             "feature_importance": {k: float(v) for k, v in (self._model.getFeatureImportance() or {}).items()} if hasattr(self._model, 'getFeatureImportance') else None,
             "model_error": self._modelError,
             "model_trained": getattr(self._model, "_modelTrained", False),
+            "model_type": self._modelType,
+            "configured_type": self.getModelSettings().get("model_type"),
             "has_undo": self.getModelConfig("last_session_start", None) is not None,
             "last_session_label": self.getModelConfig("last_session_label", None),
         }

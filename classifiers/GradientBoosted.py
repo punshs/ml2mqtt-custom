@@ -72,6 +72,44 @@ class GradientBoosted:
             handle_unknown="use_encoded_value", unknown_value=-1
         )
 
+    def _robust_train_test_split(
+        self, X: pd.DataFrame, y: np.ndarray, test_size: float = 0.3, random_state: Optional[int] = None
+    ) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray]:
+        """A robust train-test split that ensures all classes are represented in the training set."""
+        unique_classes, class_counts = np.unique(y, return_counts=True)
+        if np.min(class_counts) >= 2:
+            return train_test_split(X, y, test_size=test_size, stratify=y, random_state=random_state)
+        
+        rng = np.random.RandomState(random_state)
+            
+        train_idx = []
+        test_idx = []
+        for c in unique_classes:
+            c_indices = np.where(y == c)[0]
+            train_idx.append(c_indices[0])
+            if len(c_indices) > 1:
+                c_test_size = int(np.ceil(len(c_indices) * test_size))
+                remaining = list(c_indices[1:])
+                rng.shuffle(remaining)
+                test_idx.extend(remaining[:c_test_size])
+                train_idx.extend(remaining[c_test_size:])
+        
+        rng.shuffle(train_idx)
+        rng.shuffle(test_idx)
+        
+        if not test_idx and len(y) > len(unique_classes):
+            representatives = {np.where(y == c)[0][0] for c in unique_classes}
+            candidates = [idx for idx in train_idx if idx not in representatives]
+            if candidates:
+                test_idx = [candidates[0]]
+                train_idx.remove(candidates[0])
+        
+        X_train = X.iloc[train_idx]
+        X_test = X.iloc[test_idx]
+        y_train = y[train_idx]
+        y_test = y[test_idx]
+        return X_train, X_test, y_train, y_test
+
     def populateDataframe(self, observations: List[ModelObservation]) -> None:
         data: List[Dict[str, Any]] = []
         labels: List[str] = []
@@ -130,7 +168,8 @@ class GradientBoosted:
         )
 
         try:
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+            X_train, X_test, y_train, y_test = self._robust_train_test_split(X, y, test_size=0.3)
+
             # XGBoost handles nan natively safely
             X_train = X_train.fillna(np.nan)
             X_test = X_test.fillna(np.nan)
@@ -245,6 +284,21 @@ class GradientBoosted:
         X = pd.DataFrame(data)
         y = self.labelEncoder.fit_transform(labels)
 
+        # Guard against too few samples or classes for CV
+        unique_classes, class_counts = np.unique(y, return_counts=True)
+        if len(unique_classes) < 2:
+            self.logger.warning("Optimization skipped: Dataset must contain at least 2 classes.")
+            return self.params
+            
+        min_samples_per_class = np.min(class_counts)
+        total_samples = len(y)
+        if total_samples < 15 or min_samples_per_class < 3:
+            self.logger.warning(
+                f"Optimization skipped due to insufficient data (samples: {total_samples}, min class count: {min_samples_per_class}). "
+                "Using default model parameters."
+            )
+            return self.params
+
         self._categoricalCols = X.select_dtypes(
             include=["object", "category"]
         ).columns.tolist()
@@ -257,7 +311,7 @@ class GradientBoosted:
             ]
         )
 
-        X_trainval, X_test_final, y_trainval, y_test_final = train_test_split(
+        X_trainval, X_test_final, y_trainval, y_test_final = self._robust_train_test_split(
             X, y, test_size=0.3, random_state=42
         )
 

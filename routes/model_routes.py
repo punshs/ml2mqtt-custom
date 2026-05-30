@@ -221,6 +221,39 @@ def init_model_routes(model_manager: ModelManager):
             return jsonify(success=True)
         except Exception as e:
             return jsonify(success=False, error=str(e)), 400
+
+    @model_bp.route("/api/model/<string:modelName>/model-type", methods=["POST"])
+    def setModelTypeApi(modelName: str) -> Response:
+        try:
+            data = request.get_json(force=True) if request.is_json else {}
+            if not data or "model_type" not in data:
+                return jsonify({"error": "model_type is required"}), 400
+                
+            model_type = data["model_type"]
+            if model_type not in ["RandomForest", "KNN", "GradientBoosted"]:
+                return jsonify({"error": f"Invalid model type: {model_type}"}), 400
+                
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+                
+            currentSettings = model.getModelSettings()
+            currentSettings["model_type"] = model_type
+            model.setModelSettings(currentSettings)
+            
+            # Retrieve active status after populateModel runs
+            live_data = model.getLiveData()
+            
+            return jsonify({
+                "success": True, 
+                "configured_type": model_type,
+                "active_type": live_data.get("model_type"),
+                "model_error": live_data.get("model_error"),
+                "model_trained": live_data.get("model_trained")
+            })
+        except Exception as e:
+            logger.exception(f"Error setting model type: {e}")
+            return jsonify({"error": str(e)}), 500
     
     @model_bp.route("/model/<modelName>/changeLearning", methods=["POST"])
     def changeLearning(modelName):
