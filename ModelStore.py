@@ -93,6 +93,10 @@ class ModelStore:
                     order_num INTEGER
                 )
             """)
+            cursor.execute("CREATE TABLE IF NOT EXISTS RawSensorLogs (time REAL, data TEXT)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_raw_sensor_logs_time ON RawSensorLogs (time)")
+            cursor.execute("CREATE TABLE IF NOT EXISTS TrainingIntervals (id INTEGER PRIMARY KEY AUTOINCREMENT, start_time REAL, end_time REAL, label TEXT)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_training_intervals_range ON TrainingIntervals (start_time, end_time)")
             self._db.commit()
 
     def _populateSensors(self) -> None:
@@ -418,6 +422,64 @@ class ModelStore:
             deleted_count = cursor.rowcount
             self._db.commit()
             return deleted_count
+
+    # -- Raw logs and training intervals --
+
+    def addRawSensorLog(self, timeVal: float, data: Dict[str, Any]) -> None:
+        with self.lock, self._db:
+            self._db.execute(
+                "INSERT INTO RawSensorLogs (time, data) VALUES (?, ?)",
+                (timeVal, json.dumps(data))
+            )
+            self._db.commit()
+
+    def getRawSensorLogsInInterval(self, start_time: float, end_time: float) -> List[Dict[str, Any]]:
+        with self.lock:
+            cursor = self._db.cursor()
+            cursor.execute(
+                "SELECT time, data FROM RawSensorLogs WHERE time >= ? AND time <= ? ORDER BY time ASC",
+                (start_time, end_time)
+            )
+            rows = cursor.fetchall()
+        return [{"time": row[0], "data": json.loads(row[1])} for row in rows]
+
+    def addTrainingInterval(self, start_time: float, end_time: float, label: str) -> int:
+        with self.lock, self._db:
+            cursor = self._db.cursor()
+            cursor.execute(
+                "INSERT INTO TrainingIntervals (start_time, end_time, label) VALUES (?, ?, ?)",
+                (start_time, end_time, label)
+            )
+            self._db.commit()
+            return cursor.lastrowid
+
+    def getTrainingIntervals(self) -> List[Dict[str, Any]]:
+        with self.lock:
+            cursor = self._db.cursor()
+            cursor.execute("SELECT id, start_time, end_time, label FROM TrainingIntervals ORDER BY start_time DESC")
+            rows = cursor.fetchall()
+        return [{"id": row[0], "start_time": row[1], "end_time": row[2], "label": row[3]} for row in rows]
+
+    def deleteTrainingInterval(self, id_: int) -> None:
+        with self.lock, self._db:
+            self._db.execute("DELETE FROM TrainingIntervals WHERE id = ?", (id_,))
+            self._db.commit()
+
+    def pruneRawSensorLogs(self, max_age_seconds: float = 7 * 24 * 3600) -> None:
+        """Prunes raw logs older than max_age_seconds, EXCEPT if they fall within any training interval."""
+        import time as time_module
+        cutoff_time = time_module.time() - max_age_seconds
+        with self.lock, self._db:
+            self._db.execute("""
+                DELETE FROM RawSensorLogs 
+                WHERE time < ? 
+                  AND NOT EXISTS (
+                      SELECT 1 FROM TrainingIntervals 
+                      WHERE RawSensorLogs.time >= start_time 
+                        AND RawSensorLogs.time <= end_time
+                  )
+            """, (cutoff_time,))
+            self._db.commit()
 
     def close(self) -> None:
         try:

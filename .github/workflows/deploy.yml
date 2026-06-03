@@ -2,7 +2,7 @@ name: Build & Push to GHCR
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/time-series-ml]
 
 env:
   REGISTRY: ghcr.io
@@ -32,7 +32,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=time-series,enable=${{ github.ref == 'refs/heads/feature/time-series-ml' }}
             type=sha,prefix=
 
       - name: Set up Docker Buildx

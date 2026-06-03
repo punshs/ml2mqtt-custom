@@ -7,6 +7,9 @@
       <option value="RandomForest" {% if model.params.modelParameters.model_type == 'RandomForest' %}selected{% endif %}>Random Forest</option>
       <option value="KNN" {% if model.params.modelParameters.model_type == 'KNN' %}selected{% endif %}>K-Nearest Neighbors</option>
       <option value="GradientBoosted" {% if model.params.modelParameters.model_type == 'GradientBoosted' %}selected{% endif %}>XGBoost (Gradient Boosted)</option>
+      <option value="TemporalXGBoost" {% if model.params.modelParameters.model_type == 'TemporalXGBoost' %}selected{% endif %}>Temporal XGBoost (Sequence)</option>
+      <option value="TemporalGRU" {% if model.params.modelParameters.model_type == 'TemporalGRU' %}selected{% endif %}>Temporal GRU (Sequence Net)</option>
+      <option value="TemporalCNN1D" {% if model.params.modelParameters.model_type == 'TemporalCNN1D' %}selected{% endif %}>Temporal 1D-CNN (Sequence Net)</option>
     </select>
   </div>
 
@@ -47,6 +50,10 @@
       {% include 'edit_model/partials/model_settings/knn.html' %}
     {% elif model.params.modelParameters.model_type == 'GradientBoosted' %}
       {% include 'edit_model/partials/model_settings/gradientboosted.html' %}
+    {% elif model.params.modelParameters.model_type == 'TemporalXGBoost' %}
+      {% include 'edit_model/partials/model_settings/temporal_xgboost.html' %}
+    {% elif model.params.modelParameters.model_type in ['TemporalGRU', 'TemporalCNN1D'] %}
+      {% include 'edit_model/partials/model_settings/temporal_sequence_net.html' %}
     {% endif %}
 
     <div style="text-align: right; margin-top: 2rem;">

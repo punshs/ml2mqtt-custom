@@ -1,20 +1,24 @@
 import logging
 import json
-from typing import Any, Dict, List, Optional, Union
+import os
+import numpy as np
+from typing import Any, Dict, List, Optional, Union, Tuple
 
 from ModelStore import ModelStore, ModelObservation, EntityKey
 from classifiers.RandomForest import RandomForest, RandomForestParams
 from classifiers.KNNClassifier import KNNClassifier, KNNParams
 from classifiers.GradientBoosted import GradientBoosted, GradientBoostedParams
+from classifiers.TemporalXGBoost import TemporalXGBoost
+from classifiers.TemporalSequenceNet import TemporalSequenceNet, TORCH_AVAILABLE as SEQ_TORCH_AVAILABLE, ORT_AVAILABLE as SEQ_ORT_AVAILABLE
 from MqttClient import MqttClient
 from postprocessors.PostprocessorFactory import PostprocessorFactory
 from postprocessors.base import BasePostprocessor
 from preprocessors.base import BasePreprocessor
 from preprocessors.PreprocessorFactory import PreprocessorFactory
 from nodered.nodered_generator import NodeRedGenerator
+import re
 DISABLED_LABEL = "Disabled"
 
-import re
 
 def shorten_sensor_name(entity_id: str) -> str:
     """Extract a human-readable room name from a Bermuda entity ID.
@@ -63,6 +67,20 @@ class ModelService:
         self._autoRetrainThreshold: int = 20
         self._lastSaveTimes: Dict[str, float] = {}
         self._modelError: Optional[str] = None
+        self._lastPruneTime: float = 0.0
+
+        # Initialize inference buffer and pre-populate from database
+        self._inference_buffer: List[Tuple[float, Dict[str, Any]]] = []
+        try:
+            import time as time_module
+            now_time = time_module.time()
+            # Fetch last 30s of raw sensor logs
+            recent_logs = self._modelstore.getRawSensorLogsInInterval(now_time - 30.0, now_time)
+            self._inference_buffer = [(log["time"], log["data"]) for log in recent_logs]
+            self._logger.info("Pre-populated inference buffer with %d logs from database.", len(self._inference_buffer))
+        except Exception as e:
+            self._logger.warning("Failed to pre-populate inference buffer: %s", e)
+
         self._populateModel()
         self._loadPostprocessors()
         self._loadPreprocessors()
@@ -77,6 +95,72 @@ class ModelService:
         topic = self.getMqttTopic()
         self._logger.info("Subscribing to MQTT topic: %s/set", topic)
         self._mqttClient.subscribe(f"{topic}/set", self.predictLabel)
+
+    def buildTimeSeriesDataset(self, window_steps: int = 15) -> tuple[np.ndarray, np.ndarray, List[str]]:
+        """Queries intervals and executes timeseries resampling/slicing.
+        
+        Returns:
+            Tuple of (X, y, sensor_keys) where:
+                X is a 3D numpy array of shape (N, window_steps, num_sensors)
+                y is a 1D numpy array of labels
+                sensor_keys is a list of sensor names corresponding to the features
+        """
+        import utils.timeseries as ts_utils
+        intervals = self._modelstore.getTrainingIntervals()
+        # Trim boundary transitions (defaults to 10.0 seconds margin)
+        trimmed_intervals = ts_utils.strip_transitions(intervals, margin_seconds=10.0)
+        
+        if not trimmed_intervals:
+            self._logger.warning("No training intervals found after stripping transition margins.")
+            return np.empty((0, window_steps, 0)), np.empty((0,)), []
+            
+        # Get all registered sensor keys (features)
+        sensor_keys = [ek.name for ek in self._modelstore.getEntityKeys()]
+        if not sensor_keys:
+            self._logger.warning("No sensors registered in the model store.")
+            return np.empty((0, window_steps, 0)), np.empty((0,)), []
+            
+        X_list = []
+        y_list = []
+        
+        for interval in trimmed_intervals:
+            start = interval["start_time"]
+            end = interval["end_time"]
+            label = interval["label"]
+            
+            # Fetch raw logs in this interval
+            logs = self._modelstore.getRawSensorLogsInInterval(start, end)
+            if not logs:
+                continue
+                
+            # Resample raw logs to 1Hz
+            df = ts_utils.resample_logs(logs, sensor_keys, frequency_hz=1.0)
+            if df.empty or len(df) < window_steps:
+                continue
+                
+            # Slice into sliding windows
+            X_interval, y_interval = ts_utils.slice_windows(df, label, window_steps=window_steps)
+            if len(X_interval) > 0:
+                X_list.append(X_interval)
+                y_list.append(y_interval)
+                
+        if not X_list:
+            return np.empty((0, window_steps, len(sensor_keys))), np.empty((0,)), sensor_keys
+            
+        X = np.concatenate(X_list, axis=0)
+        y = np.concatenate(y_list, axis=0)
+        return X, y, sensor_keys
+
+    def _predict_helper(self, entityValues: Dict[str, Any], sequence_df: Optional[Any] = None) -> Tuple[Optional[str], float]:
+        if self._modelType in ["TemporalXGBoost", "TemporalGRU", "TemporalCNN1D"]:
+            if sequence_df is None or len(sequence_df) < 15:
+                return None, 0.0
+            if self._modelType == "TemporalXGBoost":
+                return self._model.predictLabel(sequence_df)
+            else:
+                return self._model.predict_sequence(sequence_df)
+        else:
+            return self._model.predictLabel(entityValues)
 
     def _populateModel(self) -> None:
         settings = self._modelstore.getDict('model_settings') or {}
@@ -93,22 +177,95 @@ class ModelService:
                 self._model = KNNClassifier(params=paramsForThisModel)
             elif self._modelType == "GradientBoosted":
                 self._model = GradientBoosted(params=paramsForThisModel)
+            elif self._modelType == "TemporalXGBoost":
+                self._model = TemporalXGBoost(params=paramsForThisModel)
+                X, y, sensor_keys = self.buildTimeSeriesDataset(window_steps=15)
+                unique_labels = len(np.unique(y)) if len(y) > 0 else 0
+                if unique_labels < 2:
+                    self._model._modelTrained = False
+                    self._modelError = "Single-class dataset: Train with at least 2 distinct rooms."
+                elif len(y) < 5:
+                    self._model._modelTrained = False
+                    self._modelError = "Insufficient sequence data: Collect at least 5 sequences."
+                else:
+                    self._model.populateDataframe(X_seq=X, y_labels=y, sensor_keys=sensor_keys)
+                    if getattr(self._model, "_modelTrained", False):
+                        self._modelError = None
+                    else:
+                        self._modelError = "TemporalXGBoost training failed."
+            elif self._modelType in ["TemporalGRU", "TemporalCNN1D"]:
+                model_type = "GRU" if self._modelType == "TemporalGRU" else "CNN1D"
+                self._model = TemporalSequenceNet(
+                    model_type=model_type,
+                    hidden_dim=paramsForThisModel.get("hidden_dim", 64),
+                    epochs=paramsForThisModel.get("epochs", 60),
+                    batch_size=paramsForThisModel.get("batch_size", 32)
+                )
+                onnx_path = os.path.join(
+                    os.path.dirname(self._modelstore.modelPath),
+                    f"{self.getName()}_{self._modelType}.onnx"
+                )
+                classes = self.getLabels()
+                sensor_keys = [ek.name for ek in self._modelstore.getEntityKeys()]
+                
+                if not SEQ_TORCH_AVAILABLE:
+                    self._model._modelTrained = False
+                    self._modelError = "PyTorch not installed. Sequence training unavailable."
+                elif not SEQ_ORT_AVAILABLE:
+                    self._model._modelTrained = False
+                    self._modelError = "onnxruntime not installed. Sequence inference unavailable."
+                elif os.path.exists(onnx_path) and classes and sensor_keys:
+                    self._logger.info("Loading pre-trained ONNX sequence model from %s", onnx_path)
+                    loaded = self._model.load_onnx_model(
+                        onnx_path=onnx_path,
+                        classes=classes,
+                        sensor_keys=sensor_keys,
+                        window_steps=15
+                    )
+                    if loaded:
+                        self._modelError = None
+                    else:
+                        self._modelError = "Failed to load pre-trained ONNX model."
+                else:
+                    self._logger.info("Training %s from scratch using training intervals", self._modelType)
+                    X, y, sensor_keys = self.buildTimeSeriesDataset(window_steps=15)
+                    unique_labels = len(np.unique(y)) if len(y) > 0 else 0
+                    if unique_labels < 2:
+                        self._model._modelTrained = False
+                        self._modelError = "Single-class dataset: Train with at least 2 distinct rooms."
+                    elif len(y) < 10:
+                        self._model._modelTrained = False
+                        self._modelError = "Insufficient sequence data: Collect at least 10 sequences."
+                    else:
+                        success = self._model.train_model(
+                            X_trainval=X,
+                            y_trainval=y,
+                            sensor_keys=sensor_keys,
+                            classes=classes,
+                            save_path=onnx_path
+                        )
+                        if success:
+                            self._modelError = None
+                        else:
+                            self._modelError = f"PyTorch {model_type} training failed."
             else:
                 self._model = RandomForest(params=paramsForThisModel)
 
-            unique_labels = len(set(obs.label for obs in observations))
-            if unique_labels < 2:
-                self._model._modelTrained = False
-                self._modelError = "Single-class dataset: Train with at least 2 distinct rooms."
-            elif len(observations) < 5:
-                self._model._modelTrained = False
-                self._modelError = "Insufficient data: Collect at least 5 observations."
-            else:
-                self._model.populateDataframe(observations)
-                if getattr(self._model, "_modelTrained", False):
-                    self._modelError = None
+            # For traditional non-temporal models, populate using standard observations
+            if self._modelType not in ["TemporalXGBoost", "TemporalGRU", "TemporalCNN1D"]:
+                unique_labels = len(set(obs.label for obs in observations))
+                if unique_labels < 2:
+                    self._model._modelTrained = False
+                    self._modelError = "Single-class dataset: Train with at least 2 distinct rooms."
+                elif len(observations) < 5:
+                    self._model._modelTrained = False
+                    self._modelError = "Insufficient data: Collect at least 5 observations."
                 else:
-                    self._modelError = f"Model training failed for {self._modelType}."
+                    self._model.populateDataframe(observations)
+                    if getattr(self._model, "_modelTrained", False):
+                        self._modelError = None
+                    else:
+                        self._modelError = f"Model training failed for {self._modelType}."
 
         except Exception as e:
             self._logger.exception("Model training crashed")
@@ -116,7 +273,7 @@ class ModelService:
 
         # Auto-recovery: If GradientBoosted or KNN failed to train but we have enough data (>=2 classes, >=10 obs),
         # automatically fall back to RandomForest.
-        if (self._modelError and self._modelType != "RandomForest" and 
+        if (self._modelError and self._modelType not in ["RandomForest", "TemporalXGBoost", "TemporalGRU", "TemporalCNN1D"] and 
                 len(observations) >= 10 and len(set(obs.label for obs in observations)) >= 2):
             self._logger.warning("Selected model %s failed to train. Triggering auto-recovery fallback to RandomForest.", self._modelType)
             self._modelType = "RandomForest"
@@ -209,6 +366,21 @@ class ModelService:
             self._logger.warning("Unexpected JSON structure: %s", type(parsed))
             return
 
+        # Log raw sensor values
+        if entityMap:
+            import time as time_module
+            now_time = time_module.time()
+            self._modelstore.addRawSensorLog(now_time, entityMap)
+            self._inference_buffer.append((now_time, dict(entityMap)))
+            # Keep only the last 30s
+            self._inference_buffer = [item for item in self._inference_buffer if now_time - item[0] <= 30.0]
+
+            # Check if we should prune old logs (once per hour)
+            if now_time - self._lastPruneTime > 3600.0:
+                self._lastPruneTime = now_time
+                import threading
+                threading.Thread(target=self._modelstore.pruneRawSensorLogs, daemon=True).start()
+
         previousEntityMap = self._modelstore.getDict("mqtt_observations")
         if "history" in previousEntityMap:
             previousEntityMap['history'].append(entityMap)
@@ -243,6 +415,19 @@ class ModelService:
         if not activeLabel and self._collectingLabel:
             activeLabel = self._collectingLabel
 
+        # Build sequence_df from inference buffer if it's a temporal model
+        sequence_df = None
+        if self._modelType in ["TemporalXGBoost", "TemporalGRU", "TemporalCNN1D"]:
+            sensor_keys = [ek.name for ek in self._modelstore.getEntityKeys()]
+            formatted_logs = [{"time": t, "data": d} for t, d in self._inference_buffer]
+            import utils.timeseries as ts_utils
+            resampled_df = ts_utils.resample_logs(
+                logs=formatted_logs,
+                sensor_keys=sensor_keys,
+                frequency_hz=1.0
+            )
+            sequence_df = resampled_df.tail(15)
+
         if activeLabel:
             learningType = self.getLearningType()
             shouldSave = False
@@ -251,12 +436,12 @@ class ModelService:
                 if support < 200:
                     shouldSave = True
                 elif getattr(self._model, "_modelTrained", False):
-                    prediction, confidence = self._model.predictLabel(entityValues)
+                    prediction, confidence = self._predict_helper(entityValues, sequence_df)
                     if prediction != activeLabel or confidence < 0.8:
                         shouldSave = True
             elif learningType == "LAZY":
                 if getattr(self._model, "_modelTrained", False):
-                    prediction, confidence = self._model.predictLabel(entityValues)
+                    prediction, confidence = self._predict_helper(entityValues, sequence_df)
                     if prediction != activeLabel or confidence < 0.8:
                         shouldSave = True
                 else:
@@ -281,13 +466,24 @@ class ModelService:
                         self._populateModel()
 
         try:
-            prediction, confidence = self._model.predictLabel(entityValues)
+            prediction, confidence = self._predict_helper(entityValues, sequence_df)
         except Exception as e:
             self._logger.exception("Prediction failed, attempting retraining recovery.")
             self._modelError = f"Prediction failed: {str(e)}"
             self._populateModel()
             try:
-                prediction, confidence = self._model.predictLabel(entityValues)
+                # Recalculate sequence_df just in case sensor keys changed after retraining
+                if self._modelType in ["TemporalXGBoost", "TemporalGRU", "TemporalCNN1D"]:
+                    sensor_keys = [ek.name for ek in self._modelstore.getEntityKeys()]
+                    formatted_logs = [{"time": t, "data": d} for t, d in self._inference_buffer]
+                    import utils.timeseries as ts_utils
+                    resampled_df = ts_utils.resample_logs(
+                        logs=formatted_logs,
+                        sensor_keys=sensor_keys,
+                        frequency_hz=1.0
+                    )
+                    sequence_df = resampled_df.tail(15)
+                prediction, confidence = self._predict_helper(entityValues, sequence_df)
             except Exception:
                 prediction, confidence = None, 0.0
 
@@ -619,12 +815,17 @@ class ModelService:
         """Stop collecting observations."""
         import time
         if self._collectingLabel:
-            self.setModelConfig("last_session_end", time.time())
+            end_time = time.time()
+            self.setModelConfig("last_session_end", end_time)
+            start_time = self.getModelConfig("last_session_start", None)
+            if start_time is not None:
+                interval_id = self.addTrainingInterval(start_time, end_time, self._collectingLabel)
+                self.setModelConfig("last_session_interval_id", interval_id)
         self._collectingLabel = None
         self._logger.info("Stopped collecting")
 
     def undoLastSession(self) -> Dict[str, Any]:
-        """Deletes all observations collected during the current or most recent collection session."""
+        """Deletes all observations collected during the most recent collection session and the corresponding training interval."""
         start = self.getModelConfig("last_session_start", None)
         if start is None:
             return {"success": False, "error": "No recent collection session found to undo."}
@@ -640,15 +841,30 @@ class ModelService:
         # Delete observations in range [start, end]
         count = self._modelstore.deleteObservationsInRange(start, end)
 
+        # Also delete the training interval if one was created
+        interval_id = self.getModelConfig("last_session_interval_id", None)
+        if interval_id is not None:
+            self._modelstore.deleteTrainingInterval(interval_id)
+
         # Clear session markers
+        self.setModelConfig("last_session_interval_id", None)
         self.setModelConfig("last_session_start", None)
         self.setModelConfig("last_session_end", None)
         self.setModelConfig("last_session_label", None)
 
-        # Retrain the model
         self._populateModel()
 
-        return {"success": True, "deleted_count": count}
+        return {"success": True, "deleted_count": count, "deleted_interval_id": interval_id}
+
+    def addTrainingInterval(self, start_time: float, end_time: float, label: str) -> int:
+        return self._modelstore.addTrainingInterval(start_time, end_time, label)
+
+    def getTrainingIntervals(self) -> List[Dict[str, Any]]:
+        return self._modelstore.getTrainingIntervals()
+
+    def deleteTrainingInterval(self, id_: int) -> None:
+        self._modelstore.deleteTrainingInterval(id_)
+        self._populateModel()
 
     def isCollecting(self) -> bool:
         return self._collectingLabel is not None

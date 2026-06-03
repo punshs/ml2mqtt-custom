@@ -11,6 +11,8 @@
          class="menu-link {% if activeSection == 'entities' %}active{% endif %}">Entities</a>
       <a href="{{ url_for('model.editModel', modelName=model.name, section='observations') }}"
          class="menu-link {% if activeSection == 'observations' %}active{% endif %}">Observations</a>
+      <a href="{{ url_for('model.editModel', modelName=model.name, section='intervals') }}"
+         class="menu-link {% if activeSection == 'intervals' %}active{% endif %}">Intervals</a>
       <a href="{{ url_for('model.editModel', modelName=model.name, section='preprocessors') }}"
          class="menu-link {% if activeSection == 'preprocessors' %}active{% endif %}">Preprocessors</a>
       <a href="{{ url_for('model.editModel', modelName=model.name, section='postprocessors') }}"

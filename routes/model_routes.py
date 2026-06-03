@@ -132,7 +132,7 @@ def init_model_routes(model_manager: ModelManager):
 
     @model_bp.route("/edit-model/<string:modelName>/<section>")
     def editModel(modelName: str, section: str = "settings") -> str:
-        validSections = ["settings", "entities", "observations", "preprocessors", "postprocessors", "mqtt", "nodered"]
+        validSections = ["settings", "entities", "observations", "preprocessors", "postprocessors", "mqtt", "nodered", "intervals"]
 
         if section not in validSections:
             abort(404)
@@ -146,6 +146,7 @@ def init_model_routes(model_manager: ModelManager):
                 self.labels: List[str] = []
                 self.currentPage: int = 0
                 self.totalPages: int = 0
+                self.intervals: List[Dict[str, Any]] = []
 
         model = ViewModel()
 
@@ -163,6 +164,10 @@ def init_model_routes(model_manager: ModelManager):
             model.currentPage = page
             model.labels = model_manager.getModel(modelName).getLabels()
             model.totalPages = math.ceil(total / pageSize)
+
+        elif section == "intervals":
+            model.intervals = model_manager.getModel(modelName).getTrainingIntervals()
+            model.labels = model_manager.getModel(modelName).getLabels()
 
         elif section == "settings":
             logger.info(f"Model settings: {model_manager.getModel(modelName).getModelSettings()}")
@@ -319,6 +324,27 @@ def init_model_routes(model_manager: ModelManager):
                 }
                 settings["model_parameters"]["GradientBoosted"] = gbParams
 
+            elif modelType == "TemporalXGBoost":
+                txParams = {
+                    "n_estimators": get_int("nEstimators", 200),
+                    "max_depth": get_int("maxDepth", 6),
+                    "learning_rate": float(request.form.get("learningRate", 0.1)),
+                    "subsample": float(request.form.get("subsample", 0.8)),
+                    "colsample_bytree": float(request.form.get("colsampleBytree", 0.8)),
+                    "min_child_weight": get_int("minChildWeight", 1),
+                    "reg_alpha": float(request.form.get("regAlpha", 0.0)),
+                    "reg_lambda": float(request.form.get("regLambda", 1.0)),
+                }
+                settings["model_parameters"]["TemporalXGBoost"] = txParams
+
+            elif modelType in ["TemporalGRU", "TemporalCNN1D"]:
+                seqParams = {
+                    "epochs": get_int("epochs", 60),
+                    "batch_size": get_int("batchSize", 32),
+                    "hidden_dim": get_int("hiddenDim", 64),
+                }
+                settings["model_parameters"][modelType] = seqParams
+
             else:
                 return jsonify(success=False, error=f"Unknown model type '{modelType}'"), 400
 
@@ -443,6 +469,51 @@ def init_model_routes(model_manager: ModelManager):
             return jsonify({"success": True, "generated": generated, "label": label})
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/intervals", methods=["GET"])
+    def getIntervals(modelName: str) -> Response:
+        """GET /api/model/<name>/intervals — list all labeled intervals."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+            return jsonify({"success": True, "intervals": model.getTrainingIntervals()})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/interval/add", methods=["POST"])
+    def addInterval(modelName: str) -> Response:
+        """POST /api/model/<name>/interval/add — add a new labeled interval."""
+        try:
+            data = request.get_json(force=True) if request.is_json else {}
+            start_time = data.get("start_time")
+            end_time = data.get("end_time")
+            label = data.get("label", "").strip()
+
+            if start_time is None or end_time is None or not label:
+                return jsonify({"error": "Missing start_time, end_time, or label"}), 400
+
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+            interval_id = model.addTrainingInterval(float(start_time), float(end_time), label)
+            return jsonify({"success": True, "id": interval_id, "label": label})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route("/api/model/<string:modelName>/interval/<int:intervalId>/delete", methods=["POST", "DELETE"])
+    def deleteInterval(modelName: str, intervalId: int) -> Response:
+        """POST/DELETE /api/model/<name>/interval/<id>/delete — delete an interval by ID."""
+        try:
+            model = model_manager.getModel(modelName)
+            if not model:
+                return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+            model.deleteTrainingInterval(intervalId)
+            return jsonify({"success": True})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
