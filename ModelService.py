@@ -120,8 +120,8 @@ class ModelService:
                     "label": self._collectingLabel
                 })
                 
-        # Trim boundary transitions (defaults to 10.0 seconds margin)
-        trimmed_intervals = ts_utils.strip_transitions(intervals, margin_seconds=10.0)
+        # Trim boundary transitions (defaults to 5.0 seconds margin)
+        trimmed_intervals = ts_utils.strip_transitions(intervals, margin_seconds=5.0)
         
         if not trimmed_intervals:
             self._logger.warning("No training intervals found after stripping transition margins.")
