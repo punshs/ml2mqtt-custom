@@ -315,13 +315,15 @@ class ModelService:
 
 
     def getEntityKeys(self) -> List[EntityKey]:
-        features = self._model.getFeatureImportance() or {}
+        features = self._model.getFeatureImportance() or {} if hasattr(self._model, 'getFeatureImportance') else {}
         entities = self._modelstore.getEntityKeys()
         for entity in entities:
             entity.significance = features.get(entity.name, 0.0)
         return entities
 
     def getAccuracy(self) -> Optional[float]:
+        if not hasattr(self._model, 'getAccuracy'):
+            return None
         return self._model.getAccuracy()
 
     def predictLabel(self, msg: Any) -> None:
@@ -551,6 +553,8 @@ class ModelService:
         self._populateModel()
 
     def getLabelStats(self) -> Optional[Dict[str, Any]]:
+        if not hasattr(self._model, 'getLabelStats'):
+            return {label: {"support": 0, "precision": 0, "recall": 0, "f1": 0} for label in self.getLabels()}
         labelStats = self._model.getLabelStats() or {}
         for extraLabel in self.getLabels():
             if not extraLabel in labelStats.keys():   
