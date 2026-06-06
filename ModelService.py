@@ -914,6 +914,9 @@ class ModelService:
         for obs in observations:
             total_label_counts[obs.label] = total_label_counts.get(obs.label, 0) + 1
 
+        is_temporal = self._modelType in ["TemporalXGBoost", "TemporalGRU", "TemporalCNN1D"]
+        temporal_counts = self.getTemporalLabelCounts() if is_temporal else None
+
         return {
             "prediction": self._lastPrediction,
             "smoothed_prediction": self._smoothedPrediction,
@@ -924,9 +927,11 @@ class ModelService:
             "learning_type": self.getLearningType(),
             "labels": self.getLabels(),
             "accuracy": float(self.getAccuracy()) if self.getAccuracy() is not None else None,
-            "observation_count": obs_count,
+            "observation_count": sum(temporal_counts.values()) if is_temporal else obs_count,
             "label_stats": {k: v.get("support", 0) for k, v in label_stats.items()},
             "total_label_counts": total_label_counts,
+            "temporal_label_counts": temporal_counts,
+            "is_temporal": is_temporal,
             "feature_importance": {k: float(v) for k, v in (self._model.getFeatureImportance() or {}).items()} if hasattr(self._model, 'getFeatureImportance') else None,
             "model_error": self._modelError,
             "model_trained": getattr(self._model, "_modelTrained", False),
@@ -968,26 +973,54 @@ class ModelService:
         obs_count = len(self._modelstore.getObservations())
         return {"accuracy": accuracy, "observation_count": obs_count}
 
+    def getTemporalLabelCounts(self) -> Dict[str, int]:
+        """Calculate the total number of resampled 1Hz sequence windows per label."""
+        counts = {label: 0 for label in self.getLabels()}
+        try:
+            _, y, _ = self.buildTimeSeriesDataset(window_steps=15)
+            if len(y) > 0:
+                for lbl in y:
+                    if lbl in counts:
+                        counts[lbl] += 1
+        except Exception as e:
+            self._logger.error(f"Error calculating temporal label counts: {e}")
+        return counts
+
     def getDataHealth(self) -> Dict[str, Any]:
         """Return data quality metrics for the training UI."""
-        observations = self._modelstore.getObservations()
-        label_counts: Dict[str, int] = {label: 0 for label in self.getLabels()}
-        for obs in observations:
-            label_counts[obs.label] = label_counts.get(obs.label, 0) + 1
+        is_temporal = self._modelType in ["TemporalXGBoost", "TemporalGRU", "TemporalCNN1D"]
+        
+        if is_temporal:
+            label_counts = self.getTemporalLabelCounts()
+            total = sum(label_counts.values())
+        else:
+            observations = self._modelstore.getObservations()
+            label_counts = {label: 0 for label in self.getLabels()}
+            for obs in observations:
+                label_counts[obs.label] = label_counts.get(obs.label, 0) + 1
+            total = len(observations)
 
-        total = len(observations)
         max_count = max(label_counts.values()) if label_counts else 0
         min_count = min(label_counts.values()) if label_counts else 0
 
         # Generate warnings
         warnings = []
-        if total < 30:
-            warnings.append({"type": "low_data", "msg": f"Only {total} total observations. Aim for 50+ per room."})
-        for label, count in label_counts.items():
-            if count < 20:
-                warnings.append({"type": "low_label", "msg": f"{label}: only {count} observations (need 20+)"})
-            if max_count > 0 and count < max_count * 0.4:
-                warnings.append({"type": "imbalance", "msg": f"{label} is underrepresented ({count} vs {max_count})"})
+        if is_temporal:
+            if total < 1200:
+                warnings.append({"type": "low_data", "msg": f"Only {total} total time-series windows. Aim for 1200+ total windows."})
+            for label, count in label_counts.items():
+                if count < 200:
+                    warnings.append({"type": "low_label", "msg": f"{label}: only {count} windows (aim for 200+)"})
+                if max_count > 0 and count < max_count * 0.4:
+                    warnings.append({"type": "imbalance", "msg": f"{label} is underrepresented ({count} vs {max_count} windows)"})
+        else:
+            if total < 30:
+                warnings.append({"type": "low_data", "msg": f"Only {total} total observations. Aim for 50+ per room."})
+            for label, count in label_counts.items():
+                if count < 20:
+                    warnings.append({"type": "low_label", "msg": f"{label}: only {count} observations (need 20+)"})
+                if max_count > 0 and count < max_count * 0.4:
+                    warnings.append({"type": "imbalance", "msg": f"{label} is underrepresented ({count} vs {max_count})"})
 
         return {
             "total_observations": total,
@@ -995,6 +1028,7 @@ class ModelService:
             "balance_ratio": round(min_count / max_count, 2) if max_count > 0 else 0,
             "warnings": warnings,
             "accuracy": self.getAccuracy(),
+            "is_temporal": is_temporal,
         }
 
     def getConfusionMatrix(self) -> Optional[Dict[str, Any]]:
