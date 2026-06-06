@@ -96,7 +96,7 @@ class ModelService:
         self._logger.info("Subscribing to MQTT topic: %s/set", topic)
         self._mqttClient.subscribe(f"{topic}/set", self.predictLabel)
 
-    def buildTimeSeriesDataset(self, window_steps: int = 15) -> tuple[np.ndarray, np.ndarray, List[str]]:
+    def buildTimeSeriesDataset(self, window_steps: int = 15, include_active: bool = False) -> tuple[np.ndarray, np.ndarray, List[str]]:
         """Queries intervals and executes timeseries resampling/slicing.
         
         Returns:
@@ -106,7 +106,20 @@ class ModelService:
                 sensor_keys is a list of sensor names corresponding to the features
         """
         import utils.timeseries as ts_utils
+        import time as time_module
         intervals = self._modelstore.getTrainingIntervals()
+        
+        if include_active and self._collectingLabel:
+            start_time = self.getModelConfig("last_session_start", None)
+            if start_time is not None:
+                # Add a temporary interval representing the ongoing session
+                intervals.append({
+                    "id": -1,
+                    "start_time": start_time,
+                    "end_time": time_module.time(),
+                    "label": self._collectingLabel
+                })
+                
         # Trim boundary transitions (defaults to 10.0 seconds margin)
         trimmed_intervals = ts_utils.strip_transitions(intervals, margin_seconds=10.0)
         
@@ -981,7 +994,7 @@ class ModelService:
         """Calculate the total number of resampled 1Hz sequence windows per label."""
         counts = {label: 0 for label in self.getLabels()}
         try:
-            _, y, _ = self.buildTimeSeriesDataset(window_steps=15)
+            _, y, _ = self.buildTimeSeriesDataset(window_steps=15, include_active=True)
             if len(y) > 0:
                 for lbl in y:
                     if lbl in counts:
