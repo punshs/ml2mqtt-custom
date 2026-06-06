@@ -235,7 +235,7 @@ def init_model_routes(model_manager: ModelManager):
                 return jsonify({"error": "model_type is required"}), 400
                 
             model_type = data["model_type"]
-            if model_type not in ["RandomForest", "KNN", "GradientBoosted"]:
+            if model_type not in ["RandomForest", "KNN", "GradientBoosted", "TemporalXGBoost", "TemporalGRU", "TemporalCNN1D"]:
                 return jsonify({"error": f"Invalid model type: {model_type}"}), 400
                 
             model = model_manager.getModel(modelName)
