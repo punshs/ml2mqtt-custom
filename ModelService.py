@@ -439,7 +439,9 @@ class ModelService:
             resampled_df = ts_utils.resample_logs(
                 logs=formatted_logs,
                 sensor_keys=sensor_keys,
-                frequency_hz=1.0
+                frequency_hz=1.0,
+                start_time=now_time - 14.0,
+                end_time=now_time
             )
             sequence_df = resampled_df.tail(15)
 
@@ -495,7 +497,9 @@ class ModelService:
                     resampled_df = ts_utils.resample_logs(
                         logs=formatted_logs,
                         sensor_keys=sensor_keys,
-                        frequency_hz=1.0
+                        frequency_hz=1.0,
+                        start_time=now_time - 14.0,
+                        end_time=now_time
                     )
                     sequence_df = resampled_df.tail(15)
                 prediction, confidence = self._predict_helper(entityValues, sequence_df)

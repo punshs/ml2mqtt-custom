@@ -7,7 +7,9 @@ def resample_logs(
     sensor_keys: List[str],
     frequency_hz: float = 1.0,
     decay_rate: float = 0.05,
-    null_value: float = 9999.0
+    null_value: float = 9999.0,
+    start_time: float = None,
+    end_time: float = None
 ) -> pd.DataFrame:
     """Resamples raw logs onto a uniform time grid with exponential decay for missing sensors.
     
@@ -17,19 +19,23 @@ def resample_logs(
         frequency_hz: Target resampling grid frequency in Hz.
         decay_rate: Lambda factor for exponential signal decay back to null_value.
         null_value: Sentinel value to represent offline/out-of-range sensor readings.
+        start_time: Optional start timestamp for the uniform grid. If None, inferred from logs.
+        end_time: Optional end timestamp for the uniform grid. If None, inferred from logs.
         
     Returns:
         pd.DataFrame: DataFrame with uniform time index and resampled, decayed sensor values.
     """
-    if not logs:
+    if not logs and (start_time is None or end_time is None):
         return pd.DataFrame(columns=sensor_keys)
 
     # Sort logs by timestamp ascending
-    sorted_logs = sorted(logs, key=lambda x: x["time"])
+    sorted_logs = sorted(logs, key=lambda x: x["time"]) if logs else []
     
     # Establish time grid
-    start_time = sorted_logs[0]["time"]
-    end_time = sorted_logs[-1]["time"]
+    if start_time is None:
+        start_time = sorted_logs[0]["time"]
+    if end_time is None:
+        end_time = sorted_logs[-1]["time"]
     
     step = 1.0 / frequency_hz
     grid_times = np.arange(start_time, end_time + step / 2.0, step)
